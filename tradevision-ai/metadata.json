@@ -1,0 +1,6 @@
+{
+  "name": "TradeVision AI",
+  "description": "Institutional quantitative trading terminal, strategy backtester, and signal visualizer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

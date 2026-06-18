@@ -1,0 +1,169 @@
+You are building TradeVision AI — a full-stack trading strategy web application. I have attached the Stitch design files showing every screen and component. Convert these designs into a working web app exactly as shown.
+
+---
+
+## WHAT THIS APP DOES
+
+TradeVision AI is a quantitative trading dashboard that:
+- Runs backtests on historical stock/ETF data using 3 different strategies
+- Displays equity curves, drawdown charts, and performance metrics (Calmar, Sharpe, Win Rate)
+- Shows daily BUY / SELL / HOLD trading signals with explanations
+- Lets users configure strategy parameters (lookback, position size, risk controls)
+- Built for the Builderr.ai Trading Agent Challenge (scored by Calmar Ratio)
+
+---
+
+## TECH STACK
+
+Frontend: React 18 + Vite + TailwindCSS v3
+Charts: Recharts (LineChart, AreaChart, ResponsiveContainer)
+HTTP: Axios
+Routing: React Router v6
+Font: Inter (Google Fonts)
+Icons: Lucide React
+
+Backend: Python 3.11 + FastAPI + Uvicorn
+Data: yfinance (Yahoo Finance API, free)
+Math: NumPy + Pandas
+Deploy: Vercel (frontend) + Railway (backend)
+
+---
+
+## 4 SCREENS TO BUILD
+
+### 1. DASHBOARD (Home — `/`)
+- Hero section: Large portfolio value number (e.g. "$103,400.00") with green/red % change badge
+- Equity curve line chart (Recharts LineChart, indigo line, gradient fill below)
+- Today's signal: BUY (green pill) / SELL (red pill) / HOLD (gray pill) with reason text
+- 3 metric cards row: Calmar Ratio, Max Drawdown %, Win Rate %
+- Top positions list: Ticker, Shares, Price, P&L (green/red colored)
+
+### 2. BACKTEST (`/backtest`)
+- Config bar: Strategy dropdown, Start Date, End Date, Initial Cash input, "Run Backtest" button
+- Results (after running):
+  - Equity curve chart (indigo line with gradient fill)
+  - Drawdown chart (red area chart, negative percentages)
+  - 6 metric cards grid (2×3): Total Return, Ann. Return, Max Drawdown, Calmar, Sharpe, Win Rate
+  - Trade history table: Date, Ticker, Side (BUY green/SELL red), Qty, Price, Value, P&L
+
+### 3. STRATEGY (`/strategy`)
+- Strategy selector: 3 selectable cards (Dual Momentum, SMA Crossover, Volatility Target)
+- Parameter sliders: Lookback Period, Top N Holdings, Max Position Size %
+- Risk toggles: SMA-200 Risk-Off (on/off), Leverage Cap 1.5x (locked on)
+- Universe selector: Ticker chip pills (SPY, QQQ, IWM, XLK, XLF, XLE, XLV, GLD, TLT)
+- Save button
+
+### 4. SIGNALS (`/signals`)
+- Today's signal hero card: Large badge + ticker + reason explanation
+- Signal grid: All tickers with individual BUY/SELL/HOLD badges + momentum %
+- Signal history table (last 30 days): Date, Ticker, Signal badge, Momentum %, Reason
+
+---
+
+## 5 API ENDPOINTS (Backend)
+
+```
+GET  /health              → { "status": "ok" }
+
+POST /backtest            → Run strategy simulation
+  Body: { strategy, tickers[], start_date, end_date, initial_cash }
+  Returns: { equity_curve[], trades[], dates[], drawdown_series[], metrics{} }
+
+GET  /prices/{ticker}     → Fetch OHLCV price bars
+  Query: ?period=1y
+  Returns: [{ ts, open, high, low, close, volume }]
+
+GET  /strategies          → List available strategies + params
+
+POST /simulate/live       → Get today's signal
+  Returns: { signal, ticker, reason, suggested_orders[] }
+```
+
+---
+
+## 3 TRADING STRATEGIES
+
+### Dual Momentum (Default)
+- Rank ETFs by 3-month return, buy top 3 with positive momentum
+- Risk-off: If SPY < 200-day SMA → sell everything, go to cash
+- Universe: SPY, QQQ, IWM, XLK, XLF, XLE, XLV, GLD
+- Position sizing: Equal weight, max 30% per position
+
+### SMA Crossover
+- Buy on Golden Cross (SMA-50 > SMA-200)
+- Sell on Death Cross (SMA-50 < SMA-200)
+- Simple trend-following, few trades
+
+### Volatility Target
+- Size positions inversely to their 20-day volatility
+- Target 10% annualized portfolio volatility
+- Cap leverage at 1.5x
+
+---
+
+## KEY METRICS (displayed in MetricCards)
+
+| Metric | Formula | Good Value |
+|--------|---------|------------|
+| Calmar Ratio | Ann. Return / Max Drawdown | > 2.0 |
+| Sharpe Ratio | (Return - Rf) / StdDev | > 1.0 |
+| Sortino Ratio | (Return - Rf) / Downside StdDev | > 2.0 |
+| Max Drawdown | (Peak - Trough) / Peak | < 20% |
+| Win Rate | Winning Trades / Total Trades | > 50% |
+| Profit Factor | Gross Profit / Gross Loss | > 1.5 |
+
+---
+
+## DESIGN TOKENS (match the Stitch designs)
+
+Colors:
+- Background: #0F172A (navy)
+- Card: #1E293B (dark slate)
+- Border: #334155 (slate)
+- Primary: #6366F1 (indigo)
+- Accent: #22D3EE (cyan)
+- Positive: #10B981 (green)
+- Negative: #F87171 (red)
+- Warning: #F59E0B (amber)
+- Text: #E2E8F0 (light)
+- Muted: #94A3B8 (dim)
+
+Typography:
+- Font: "Inter", sans-serif
+- Hero number: 40px bold white
+- Page title: 24px bold white
+- Section heading: 18px semibold cyan
+- Metric value: 28px bold (colored)
+- Label: 11px uppercase tracking-wide dim
+- Body: 14px normal light
+
+Components:
+- Cards: bg-slate-800, border border-slate-700, rounded-xl, p-4
+- Buttons: bg-indigo-500 hover:bg-indigo-600, rounded-lg, font-semibold
+- Badges: rounded-full, px-3 py-1, font-bold text-xs
+- Charts: Recharts with indigo (#6366F1) primary line, red (#F87171) drawdown
+- Navigation: Bottom bar, 4 tabs, icons + labels, active = indigo
+
+---
+
+## DATA FORMATS
+
+OHLCV Bar: { ts: "2024-06-15", open: 545.20, high: 548.90, low: 543.10, close: 547.80, volume: 42500000 }
+Trade: { date, ticker, side: "buy"|"sell", qty, price, value, pnl }
+Signal: { date, ticker, action: "BUY"|"SELL"|"HOLD", reason: "...", quantity, target_pct }
+Metrics: { total_return_pct, ann_return_pct, max_drawdown_pct, calmar_ratio, sharpe_ratio, sortino_ratio, win_rate_pct, profit_factor, volatility_pct }
+
+---
+
+## INSTRUCTIONS
+
+1. Match the Stitch designs EXACTLY — use the same layout, spacing, colors, and component structure
+2. Build React components for: MetricCard, EquityCurve, DrawdownChart, TradeTable, SignalBadge
+3. Use TailwindCSS dark theme classes throughout
+4. Connect frontend to FastAPI backend via Axios
+5. Backend fetches real price data from yfinance
+6. Include loading states (skeleton shimmer) and empty states
+7. Add micro-animations: card fade-in, chart draw-in, hover effects, button press
+8. Bottom navigation with 4 tabs: Dashboard, Backtest, Strategy, Signals
+9. Make it responsive (mobile-first, works on desktop too)
+10. Full project structure with separate backend/ and frontend/ folders
