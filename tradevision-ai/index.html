@@ -2,12 +2,35 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#6366F1" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <title>TradeVision AI</title>
+    <meta name="description" content="TradeVision AI — Institutional-grade quantitative trading platform with ML-powered signals and live Alpaca execution." />
+    <script>
+      // Global error handler to suppress lightweight-charts "Object is disposed" errors
+      // These occur during Vite HMR hot-reload cycles and are non-fatal
+      window.addEventListener('error', function(event) {
+        if (event.error && event.error.message && event.error.message.includes('Object is disposed')) {
+          event.preventDefault();
+          console.warn('[TradeVision] Suppressed chart disposal error during HMR reload.');
+          return false;
+        }
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(err => {
+            console.log('SW registration failed: ', err);
+          });
+        });
+      }
+    </script>
   </body>
 </html>
-

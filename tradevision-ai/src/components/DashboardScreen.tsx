@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
-import { TrendingUp, AlertTriangle, ArrowUpRight, ArrowDownRight, RefreshCw, Layers } from "lucide-react";
+import { TrendingUp, AlertTriangle, ArrowUpRight, ArrowDownRight, RefreshCw, Layers, PlayCircle, StopCircle } from "lucide-react";
+import LiveCandleChart from "./LiveCandleChart";
 
 interface DashboardScreenProps {
   setTab: (tab: string) => void;
@@ -10,8 +11,14 @@ interface DashboardScreenProps {
 export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScreenProps) {
   const [liveData, setLiveData] = useState<any>(null);
   const [backtestData, setBacktestData] = useState<any>(null);
+  const [alpacaData, setAlpacaData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedRange, setSelectedRange] = useState("1M");
+  
+  // Agent Control State
+  const [agentRunning, setAgentRunning] = useState(false);
+  const [agentTarget, setAgentTarget] = useState(500);
+  const [agentPid, setAgentPid] = useState<number | null>(null);
 
   useEffect(() => {
     fetchAllData();
@@ -20,8 +27,7 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      // Fetch live signal + run a real backtest in parallel
-      const [liveRes, btRes] = await Promise.all([
+      const [liveRes, btRes, alpacaRes] = await Promise.all([
         fetch("/api/simulate/live", { method: "POST" }).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch("/api/backtest", {
           method: "POST",
@@ -33,10 +39,21 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
             end_date: "2024-06-01",
             initial_cash: 100000
           })
-        }).then(r => r.ok ? r.json() : null).catch(() => null)
+        }).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch("/api/alpaca/portfolio").then(r => r.ok ? r.json() : null).catch(() => null)
       ]);
       setLiveData(liveRes);
       setBacktestData(btRes);
+      setAlpacaData(alpacaRes);
+      
+      const statusRes = await fetch("/api/agent/status").then(r => r.ok ? r.json() : null).catch(() => null);
+      if (statusRes) {
+        setAgentRunning(statusRes.running);
+        if (statusRes.running) {
+          setAgentTarget(statusRes.target);
+          setAgentPid(statusRes.pid);
+        }
+      }
     } catch (err) {
       console.error("Failed to load data:", err);
     } finally {
@@ -44,33 +61,53 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
     }
   };
 
-  // Use real backtest equity curve if available, fallback to mock
-  const chartData = backtestData?.equity_curve?.length > 0
+  const toggleAgent = async () => {
+    if (agentRunning) {
+      // Stop it
+      const res = await fetch("/api/agent/stop", { method: "POST" });
+      if (res.ok) {
+        setAgentRunning(false);
+        setAgentPid(null);
+      }
+    } else {
+      // Start it
+      const res = await fetch("/api/agent/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: agentTarget })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAgentRunning(true);
+        setAgentPid(data.pid);
+      }
+    }
+  };
+
+  // Use real live Alpaca equity curve if available, then backtest
+  const chartData = alpacaData?.equity_curve?.length > 0
+    ? alpacaData.equity_curve.map((p: any) => ({
+        date: p.time,
+        strategy: Math.round(p.equity),
+        benchmark: 100000,
+      }))
+    : backtestData?.equity_curve?.length > 0
     ? backtestData.equity_curve.map((p: any) => ({
-        date: p.date?.slice(5) || p.date, // Show "MM-DD" format
+        date: p.date?.slice(5) || p.date,
         strategy: Math.round(p.strategy),
         benchmark: Math.round(p.benchmark),
       }))
-    : [
-        { date: "Oct 01", strategy: 97800, benchmark: 98100 },
-        { date: "Oct 04", strategy: 98400, benchmark: 98300 },
-        { date: "Oct 08", strategy: 96900, benchmark: 97400 },
-        { date: "Oct 12", strategy: 99100, benchmark: 98000 },
-        { date: "Oct 16", strategy: 98900, benchmark: 98600 },
-        { date: "Oct 20", strategy: 101200, benchmark: 99400 },
-        { date: "Oct 24", strategy: 100800, benchmark: 99100 },
-        { date: "Oct 28", strategy: 102400, benchmark: 99900 },
-        { date: "Nov 01", strategy: 103400, benchmark: 100400 },
-      ];
+    : [];
 
-  // Extract real metrics or use demo values
   const m = backtestData?.metrics || {};
-  const finalEquity = chartData.length > 0 ? chartData[chartData.length - 1].strategy : 103400;
-  const totalReturnPct = m.total_return_pct ?? 3.4;
-  const calmar = m.calmar_ratio ?? 2.65;
-  const maxDD = m.max_drawdown_pct ?? 7.2;
-  const winRate = m.win_rate_pct ?? 56.3;
-  const nTrades = backtestData?.trades?.length ?? 47;
+  const finalEquity = alpacaData?.equity ?? (chartData.length > 0 ? chartData[chartData.length - 1].strategy : 0);
+  const totalReturnPct = alpacaData ? ((alpacaData.equity - 100000) / 100000 * 100) : (m.total_return_pct ?? 0);
+  const calmar = m.calmar_ratio ?? 0;
+  const maxDD = m.max_drawdown_pct ?? 0;
+  const winRate = m.win_rate_pct ?? 0;
+  const nTrades = backtestData?.trades?.length ?? 0;
+  const cashValue = alpacaData?.cash ?? 0;
+  const investedValue = finalEquity - cashValue;
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -95,7 +132,99 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
 
   return (
     <div className="space-y-6">
+
+      {/* Agent Control Panel */}
+      <div className={`border rounded-xl p-6 relative overflow-hidden backdrop-blur-md shadow-lg transition-all ${agentRunning ? "bg-[#10B981]/10 border-[#10B981]/50" : "bg-[#1e293b]/80 border-[#334155]"}`}>
+        {agentRunning && <div className="absolute top-0 left-0 w-full h-1 bg-[#10B981] animate-pulse"></div>}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+          
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-xl font-extrabold text-white tracking-tight">Autonomous Agent</h2>
+              {agentRunning ? (
+                <span className="bg-[#10B981]/20 text-[#10B981] px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase animate-pulse flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 bg-[#10B981] rounded-full"></div> LIVE (PID: {agentPid})
+                </span>
+              ) : (
+                <span className="bg-[#94A3B8]/20 text-[#94A3B8] px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase">OFFLINE</span>
+              )}
+            </div>
+            <p className="text-xs text-[#94A3B8] font-mono">
+              Controls the background Python execution engine.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 w-full md:w-auto">
+            <div className="flex flex-col">
+              <label className="text-[10px] font-bold font-mono text-[#94A3B8] uppercase mb-1">Target Profit ($)</label>
+              <input 
+                type="number" 
+                value={agentTarget} 
+                onChange={(e) => setAgentTarget(Number(e.target.value))}
+                disabled={agentRunning}
+                className="w-24 bg-[#0b1326] border border-[#334155] rounded px-3 py-2 text-white font-mono text-sm focus:outline-none focus:border-[#6366F1] disabled:opacity-50"
+              />
+            </div>
+            
+            <button 
+              onClick={toggleAgent}
+              className={`flex-1 md:flex-none mt-5 px-6 py-2 rounded-lg font-bold font-mono text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-transform active:scale-95 ${
+                agentRunning 
+                  ? "bg-[#EF4444]/20 text-[#EF4444] hover:bg-[#EF4444]/30 border border-[#EF4444]/50" 
+                  : "bg-gradient-to-r from-[#6366F1] to-[#22D3EE] text-white shadow-[0_0_15px_rgba(99,102,241,0.3)] hover:opacity-90"
+              }`}
+            >
+              {agentRunning ? (
+                <><StopCircle className="w-4 h-4" /> STOP AGENT</>
+              ) : (
+                <><PlayCircle className="w-4 h-4" /> START AGENT</>
+              )}
+            </button>
+          </div>
+          
+        </div>
+      </div>
       
+      {/* Alpaca Live Card */}
+      {alpacaData && !alpacaData.error && (
+        <div className="bg-[#1e293b]/80 border border-[#22D3EE]/50 rounded-xl p-6 relative overflow-hidden backdrop-blur-md shadow-[0_0_15px_rgba(34,211,238,0.15)] group">
+          <div className="absolute top-4 right-4 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse shadow-[0_0_8px_#10B981]"></span>
+            <span className="text-[9px] font-mono text-[#10B981] tracking-widest uppercase">ALPACA LIVE PAPER</span>
+          </div>
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+            <div>
+              <span className="text-[#94A3B8] text-[10px] uppercase font-mono tracking-wider">
+                Live Account Value
+              </span>
+              <h1 className="text-3xl font-extrabold text-white font-mono mt-1 tracking-tight">
+                ${alpacaData.equity?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+              </h1>
+            </div>
+            <div className={`flex items-center gap-1.5 ${alpacaData.total_profit_since_inception >= 0 ? 'bg-[#10B981]/15 border-[#10B981]/30 text-[#10B981]' : 'bg-[#EF4444]/15 border-[#EF4444]/30 text-[#EF4444]'} border text-sm font-mono font-bold px-3 py-1.5 rounded-md`}>
+              <span>{alpacaData.total_profit_since_inception >= 0 ? '+' : ''}${alpacaData.total_profit_since_inception?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} PNL</span>
+            </div>
+          </div>
+          
+          {alpacaData.positions && alpacaData.positions.length > 0 && (
+            <div>
+              <span className="text-[#94A3B8] text-[10px] uppercase font-mono tracking-wider mb-2 block">Live Positions</span>
+              <div className="flex gap-3 flex-wrap">
+                {alpacaData.positions.map((p: any) => (
+                  <div key={p.ticker} className="bg-[#0b1326]/60 border border-[#334155] p-2 px-4 rounded-lg text-center flex items-center gap-3">
+                    <div className="text-sm font-bold text-white font-mono">{p.ticker}</div>
+                    <div className="text-xs text-[#94A3B8]">{p.qty} sh</div>
+                    <div className={`text-xs font-mono ${p.unrealized_pl >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
+                      {p.unrealized_pl >= 0 ? '+' : ''}${p.unrealized_pl.toFixed(2)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Top row: Portfolio Summary & Daily Signal */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         
@@ -118,9 +247,9 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
           </div>
           <div className="text-[11px] font-mono text-[#94A3B8] mt-2 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#10B981]"></span>
-            <span>Allocated cash: $11,340.00 (11%)</span>
+            <span>Cash: ${cashValue > 0 ? cashValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'} ({finalEquity > 0 ? ((cashValue / finalEquity) * 100).toFixed(0) : 0}%)</span>
             <span className="text-[#334155]">|</span>
-            <span>Invested equity: $92,060.00 (89%)</span>
+            <span>Invested: ${investedValue > 0 ? investedValue.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'} ({finalEquity > 0 ? ((investedValue / finalEquity) * 100).toFixed(0) : 0}%)</span>
           </div>
         </div>
 
@@ -145,14 +274,21 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
             <div className="mt-3 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="text-xl font-bold text-white tracking-tight">
-                  BUY <span className="font-mono text-[#6366F1]">{liveData?.ticker || "QQQ"}</span>
+                  {liveData?.action || "HOLD"} <span className="font-mono text-[#6366F1]">{liveData?.ticker || "—"}</span>
                 </span>
-                <span className="bg-[#10B981]/15 border border-[#10B981]/30 text-[#10B981] text-[10px] font-mono px-2 py-0.5 rounded-full font-bold">
-                  BULLISH
-                </span>
+                {liveData?.action === "BUY" && (
+                  <span className="bg-[#10B981]/15 border border-[#10B981]/30 text-[#10B981] text-[10px] font-mono px-2 py-0.5 rounded-full font-bold">
+                    BULLISH
+                  </span>
+                )}
+                {liveData?.action === "SELL" && (
+                  <span className="bg-[#EF4444]/15 border border-[#EF4444]/30 text-[#EF4444] text-[10px] font-mono px-2 py-0.5 rounded-full font-bold">
+                    BEARISH
+                  </span>
+                )}
               </div>
               <p className="text-xs text-[#94A3B8] leading-relaxed line-clamp-3">
-                {liveData?.reason || "High momentum divergence. Multi-factor quant rankings show strong asset compliance. Maintain allocated long weights."}
+                {liveData?.reason || "Awaiting signal from AI engine..."}
               </p>
               <div className="flex gap-2 pt-1">
                 <button 
@@ -180,9 +316,11 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
           <div>
             <h3 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
               <Layers className="w-4 h-4 text-[#22D3EE]" />
-              <span>Institutional Portfolio Valuation Curve</span>
+              <span>Real-Time Market Execution Flow</span>
             </h3>
-            <p className="text-[10px] text-[#94A3B8] font-mono mt-0.5">Dual Momentum vs. SPY Absolute Benchmark</p>
+            <p className="text-[10px] text-[#94A3B8] font-mono mt-0.5">
+              Live Interactive Candlestick Stream (Hardware Accelerated)
+            </p>
           </div>
           <div className="flex gap-1.5 mt-2 sm:mt-0 bg-[#0b1326]/60 p-1 rounded-lg border border-[#334155]">
             {["1W", "1M", "YTD"].map((r) => (
@@ -201,53 +339,8 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
           </div>
         </div>
 
-        <div className="h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorStrategy" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366F1" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#6366F1" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2d3449" vertical={false} />
-              <XAxis 
-                dataKey="date" 
-                stroke="#464554" 
-                tickLine={false} 
-                axisLine={false}
-                tick={{ fill: "#94A3B8", fontSize: 9, fontFamily: "monospace" }} 
-              />
-              <YAxis 
-                stroke="#464554" 
-                tickLine={false} 
-                axisLine={false}
-                domain={['dataMin - 1000', 'dataMax + 1000']}
-                tickFormatter={(v) => `$${Math.round(v / 1000)}k`}
-                tick={{ fill: "#94A3B8", fontSize: 9, fontFamily: "monospace" }}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <ReferenceLine y={100000} stroke="#464554" strokeDasharray="5 5" label={{ value: 'INITIAL AT $100K', fill: '#94A3B8', fontSize: 8, fontFamily: "monospace", position: "bottom" }} />
-              <Area 
-                type="monotone" 
-                dataKey="strategy" 
-                stroke="#6366F1" 
-                strokeWidth={3} 
-                fillOpacity={1} 
-                fill="url(#colorStrategy)" 
-                activeDot={{ r: 5, strokeWidth: 0, fill: "#22D3EE" }}
-              />
-              <Area 
-                type="monotone" 
-                dataKey="benchmark" 
-                stroke="#464554" 
-                strokeWidth={1.5} 
-                strokeDasharray="4 4"
-                fill="none" 
-                dot={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+        <div className="h-[320px] w-full">
+          <LiveCandleChart ticker={liveData?.ticker || "SPY"} />
         </div>
       </div>
 
@@ -286,86 +379,69 @@ export default function DashboardScreen({ setTab, onRunBacktest }: DashboardScre
 
       </div>
 
-      {/* Active Portfolio Positions section */}
+      {/* Active Portfolio Positions section — dynamically from Alpaca */}
       <div className="bg-[#1e293b]/80 border border-[#334155] rounded-xl p-0 overflow-hidden backdrop-blur-md shadow-lg">
         <div className="p-4 border-b border-[#334155] flex justify-between items-center">
-          <h3 className="text-xs font-bold text-white tracking-tight uppercase font-mono">Current Live Allocated Positions</h3>
+          <h3 className="text-xs font-bold text-white tracking-tight uppercase font-mono">Live Allocated Positions</h3>
           <span className="bg-[#0b1326] border border-[#334155] text-[#94A3B8] px-2.5 py-1 rounded text-[10px] font-mono">
-            Last rebalanced: Oct 28
+            {alpacaData?.positions?.length ?? 0} positions
           </span>
         </div>
         <div className="w-full overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[500px]">
             <thead>
               <tr className="bg-[#0b1326] border-b border-[#334155]">
-                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider select-none">Asset ETF</th>
+                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider select-none">Asset</th>
                 <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider text-right select-none">Shares</th>
-                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider text-right select-none">Current Price</th>
-                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider text-right select-none">Calculated P&amp;L</th>
-                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider text-right select-none">Tactical Trigger</th>
+                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider text-right select-none">Market Value</th>
+                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider text-right select-none">Unrealized P&amp;L</th>
+                <th className="p-4 text-[10px] font-mono uppercase text-[#94A3B8] tracking-wider text-right select-none">Action</th>
               </tr>
             </thead>
             <tbody className="font-mono text-xs text-white">
-              <tr className="border-b border-[#334155]/50 hover:bg-[#6366F1]/5 transition-colors group">
-                <td className="p-4 flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-[#6366F1]/10 text-[#6366F1] flex items-center justify-center font-bold text-[11px] border border-[#6366F1]/20">
-                    S
-                  </div>
-                  <span className="font-bold text-white">SPY</span>
-                </td>
-                <td className="p-4 text-all text-right text-[#94A3B8]">50</td>
-                <td className="p-4 text-right font-medium text-white">$547.80</td>
-                <td className="p-4 text-right">
-                  <span className="inline-block bg-[#10B981]/15 text-[#10B981] px-2.5 py-1 rounded-md border border-[#10B981]/30 text-[10px] font-bold">
-                    +4.9% (+$1,342.50)
-                  </span>
-                </td>
-                <td className="p-4 text-right text-xs">
-                  <button onClick={onRunBacktest} className="text-[#94A3B8] group-hover:text-[#6366F1] transition-colors text-[10px] font-bold tracking-wider hover:underline">
-                    Re-Backtest SPY
-                  </button>
-                </td>
-              </tr>
-              <tr className="border-b border-[#334155]/50 hover:bg-[#6366F1]/5 transition-colors group">
-                <td className="p-4 flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-[#6366F1]/10 text-[#6366F1] flex items-center justify-center font-bold text-[11px] border border-[#6366F1]/20">
-                    Q
-                  </div>
-                  <span className="font-bold text-white">QQQ</span>
-                </td>
-                <td className="p-4 text-all text-right text-[#94A3B8]">70</td>
-                <td className="p-4 text-right font-medium text-white">$445.22</td>
-                <td className="p-4 text-right">
-                  <span className="inline-block bg-[#10B981]/15 text-[#10B981] px-2.5 py-1 rounded-md border border-[#10B981]/30 text-[10px] font-bold">
-                    +6.2% (+$1,925.32)
-                  </span>
-                </td>
-                <td className="p-4 text-right text-xs">
-                  <button onClick={onRunBacktest} className="text-[#94A3B8] group-hover:text-[#6366F1] transition-colors text-[10px] font-bold tracking-wider hover:underline">
-                    Re-Backtest QQQ
-                  </button>
-                </td>
-              </tr>
-              <tr className="hover:bg-[#6366F1]/5 transition-colors group">
-                <td className="p-4 flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-[#6366F1]/10 text-[#6366F1] flex items-center justify-center font-bold text-[11px] border border-[#6366F1]/20">
-                    G
-                  </div>
-                  <span className="font-bold text-white">GLD</span>
-                </td>
-                <td className="p-4 text-all text-right text-[#94A3B8]">180</td>
-                <td className="p-4 text-right font-medium text-white">$184.20</td>
-                <td className="p-4 text-right">
-                  <span className="inline-block bg-[#F87171]/15 text-[#F87171] px-2.5 py-1 rounded-md border border-[#F87171]/30 text-[10px] font-bold">
-                    -0.4% (-$132.80)
-                  </span>
-                </td>
-                <td className="p-4 text-right text-xs">
-                  <button onClick={onRunBacktest} className="text-[#94A3B8] group-hover:text-[#6366F1] transition-colors text-[10px] font-bold tracking-wider hover:underline">
-                    Re-Backtest GLD
-                  </button>
-                </td>
-              </tr>
+              {alpacaData?.positions && alpacaData.positions.length > 0 ? (
+                alpacaData.positions.map((pos: any) => (
+                  <tr key={pos.ticker} className="border-b border-[#334155]/50 hover:bg-[#6366F1]/5 transition-colors group">
+                    <td className="p-4 flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-[#6366F1]/10 text-[#6366F1] flex items-center justify-center font-bold text-[11px] border border-[#6366F1]/20">
+                        {pos.ticker?.charAt(0)}
+                      </div>
+                      <span className="font-bold text-white">{pos.ticker}</span>
+                    </td>
+                    <td className="p-4 text-right text-[#94A3B8]">{pos.qty}</td>
+                    <td className="p-4 text-right font-medium text-white">
+                      ${pos.market_value?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    </td>
+                    <td className="p-4 text-right">
+                      <span className={`inline-block px-2.5 py-1 rounded-md border text-[10px] font-bold ${
+                        pos.unrealized_pl >= 0 
+                          ? 'bg-[#10B981]/15 text-[#10B981] border-[#10B981]/30' 
+                          : 'bg-[#F87171]/15 text-[#F87171] border-[#F87171]/30'
+                      }`}>
+                        {pos.unrealized_pl >= 0 ? '+' : ''}${pos.unrealized_pl?.toFixed(2)} ({pos.unrealized_plpc ? (pos.unrealized_plpc * 100).toFixed(2) : '0.00'}%)
+                      </span>
+                    </td>
+                    <td className="p-4 text-right text-xs">
+                      <button onClick={onRunBacktest} className="text-[#94A3B8] group-hover:text-[#6366F1] transition-colors text-[10px] font-bold tracking-wider hover:underline">
+                        Backtest {pos.ticker}
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-[#94A3B8]">
+                    {loading ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Loading live positions...</span>
+                      </div>
+                    ) : (
+                      <span>No live positions — connect Alpaca to begin trading</span>
+                    )}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

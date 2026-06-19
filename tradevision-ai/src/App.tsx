@@ -5,22 +5,29 @@ import DashboardScreen from "./components/DashboardScreen";
 import BacktestScreen from "./components/BacktestScreen";
 import StrategyScreen from "./components/StrategyScreen";
 import SignalsScreen from "./components/SignalsScreen";
-import { X, Shield, Activity, Save, Mail, HelpCircle, AlertOctagon, Bell, Cpu, ArrowUpRight, Check, Sparkles } from "lucide-react";
+import { AITradingLabScreen } from "./components/MachineLearningScreen";
+import ChartErrorBoundary from "./components/ChartErrorBoundary";
+import LiveCandleChart from './components/LiveCandleChart';
+import TradeLogScreen from './components/TradeLogScreen';
+import PerformanceScreen from './components/PerformanceScreen';
+import NewsSentimentScreen from './components/NewsSentimentScreen';
+import RiskHeatmapScreen from './components/RiskHeatmapScreen';
+import WatchlistScreen from './components/WatchlistScreen';
+import HelpScreen from './components/HelpScreen';
+import { ThemeProvider, useTheme } from './ThemeContext';
+import { Moon, Sun, X, Shield, Activity, Save, Mail, HelpCircle, AlertOctagon, Bell, Cpu, ArrowUpRight, Check, Sparkles } from "lucide-react";
 
-export default function App() {
-  const [activeTab, setActiveTab ] = useState<string>("dashboard");
+function AppContent() {
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-
-  // System parameters state inside settings
   const [systemAlertThreshold, setSystemAlertThreshold] = useState("2.5");
   const [executionRoute, setExecutionRoute] = useState("Low-Latency Router");
-  
-  // Custom support form state
   const [supportCategory, setSupportCategory] = useState("Strategy Execution");
   const [supportText, setSupportText] = useState("");
   const [supportSuccess, setSupportSuccess] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   const handleSupportSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,7 +39,6 @@ export default function App() {
     }, 2000);
   };
 
-  // Route selector map
   const renderTabContent = () => {
     switch (activeTab) {
       case "dashboard":
@@ -43,16 +49,36 @@ export default function App() {
         return <StrategyScreen />;
       case "signals":
         return <SignalsScreen />;
+      case "ai-lab":
+        return <AITradingLabScreen />;
+      case 'live':
+        return <ChartErrorBoundary><LiveCandleChart ticker="SPY" /></ChartErrorBoundary>;
+      case 'ml':
+        return <ChartErrorBoundary><AITradingLabScreen /></ChartErrorBoundary>;
+      case 'trades':
+        return <TradeLogScreen />;
+      case 'performance':
+        return <PerformanceScreen />;
+      case 'news':
+        return <NewsSentimentScreen />;
+      case 'risk':
+        return <RiskHeatmapScreen />;
+      case 'watchlist':
+        return <WatchlistScreen />;
+      case 'help':
+        return <HelpScreen />;
       default:
         return <DashboardScreen setTab={setActiveTab} onRunBacktest={() => setActiveTab("backtest")} />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#090d16] text-[#e2e8f0] font-sans antialiased pb-20 md:pb-6 selection:bg-[#6366F1] selection:text-white transition-all duration-300">
+    <div className="min-h-screen bg-gradient-to-br from-[#020617] via-[#0f172a] to-[#020617] text-[#e2e8f0] font-sans antialiased pb-20 md:pb-6 selection:bg-[#6366F1] selection:text-white transition-all duration-300">
       
-      {/* Decorative ambient subtle cyber grid vector background */}
-      <div className="fixed inset-0 bg-[linear-gradient(to_right,#1f29370a_1px,transparent_1px),linear-gradient(to_bottom,#1f29370a_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none z-0"></div>
+      {/* Decorative ambient subtle cyber grid vector background with glow */}
+      <div className="fixed inset-0 bg-[linear-gradient(to_right,#1f293720_1px,transparent_1px),linear-gradient(to_bottom,#1f293720_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none z-0"></div>
+      <div className="fixed top-0 left-1/4 w-[500px] h-[500px] bg-indigo-500/10 blur-[120px] rounded-full pointer-events-none z-0"></div>
+      <div className="fixed bottom-0 right-1/4 w-[400px] h-[400px] bg-cyan-500/10 blur-[120px] rounded-full pointer-events-none z-0"></div>
       
       {/* Structural Adaptive Navigation HUD (Desktop: 240px, Tablet: 64px, Mobile: Bottom bar) */}
       <SideNavBar 
@@ -64,6 +90,7 @@ export default function App() {
 
       {/* Main Terminal Shell container layout adjusts padding responsively for tablet (md:pl-16) & desktop (lg:pl-[240px]) */}
       <div className="md:pl-16 lg:pl-[240px] flex flex-col min-h-screen relative z-10 transition-all duration-300">
+
         
         {/* Global Institutional Top Action Bar */}
         <TopAppBar 
@@ -77,7 +104,9 @@ export default function App() {
 
         {/* Tactical Screen Canvas Area */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 mt-16 max-w-7xl w-full mx-auto animate-fade-in">
-          {renderTabContent()}
+          <ChartErrorBoundary>
+            {renderTabContent()}
+          </ChartErrorBoundary>
         </main>
       </div>
 
@@ -329,7 +358,13 @@ export default function App() {
           className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
         />
       )}
-
     </div>
+  );
+}
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 }

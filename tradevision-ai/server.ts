@@ -3,8 +3,12 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { exec, spawn, ChildProcess } from "child_process";
+import { promisify } from "util";
 import { runSimulation, getPricesForTicker } from "./src/backtester";
 import { StrategyConfig } from "./src/types";
+
+const execAsync = promisify(exec);
 
 dotenv.config();
 
@@ -99,9 +103,35 @@ async function generateSignalsWithGemini(ai: GoogleGenAI, prompt: string) {
   throw lastError || new Error("All model fallback pathways exhausted");
 }
 
+const PORT = Number(process.env.PORT) || 3000;
+
+// ==========================================
+// IN-MEMORY CACHE FOR INSTANT PRE-LOADING
+// ==========================================
+const cache = {
+  liveSignal: null as any,
+  lastLiveSignalTime: 0,
+  backtest: null as any,
+  lastBacktestTime: 0,
+  portfolio: null as any,
+  lastPortfolioTime: 0
+};
+const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+// Helper to fetch Alpaca Portfolio
+async function fetchPortfolioCache() {
+  try {
+    const backendDir = path.join(process.cwd(), "..", "backend");
+    const { stdout } = await execAsync(`python live_status.py`, { cwd: backendDir });
+    cache.portfolio = JSON.parse(stdout);
+    cache.lastPortfolioTime = Date.now();
+  } catch (e) {
+    console.error("[SERVER] Preload: Failed to fetch portfolio");
+  }
+}
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
 
   app.use(express.json());
 
@@ -109,6 +139,63 @@ async function startServer() {
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "TradeVision Terminal API Operational" });
   });
+
+  // --- AGENT PROCESS MANAGER ---
+  let agentProcess: ChildProcess | null = null;
+  let currentTarget = 500.0;
+
+  app.post("/api/agent/start", (req, res) => {
+    if (agentProcess) {
+      return res.status(400).json({ error: "Agent is already running." });
+    }
+    
+    currentTarget = Number(req.body.target) || 500.0;
+    const backendDir = path.join(process.cwd(), "..", "backend");
+    
+    try {
+      console.log(`[SERVER] Spawning Python agent with target $${currentTarget}`);
+      agentProcess = spawn("python", ["-u", "run_live.py", "--target", currentTarget.toString()], { cwd: backendDir });
+      
+      agentProcess.stdout?.on("data", (data) => {
+        // In a real app we might stream this to UI via websockets
+        process.stdout.write(`[AGENT] ${data}`);
+      });
+      
+      agentProcess.stderr?.on("data", (data) => {
+        process.stderr.write(`[AGENT ERROR] ${data}`);
+      });
+      
+      agentProcess.on("close", (code) => {
+        console.log(`[SERVER] Agent process exited with code ${code}`);
+        agentProcess = null;
+      });
+      
+      res.json({ success: true, message: "Agent started successfully", pid: agentProcess.pid });
+    } catch (err: any) {
+      console.error("[SERVER] Failed to start agent:", err);
+      res.status(500).json({ error: "Failed to spawn agent process." });
+    }
+  });
+
+  app.post("/api/agent/stop", (req, res) => {
+    if (!agentProcess) {
+      return res.status(400).json({ error: "Agent is not currently running." });
+    }
+    
+    console.log("[SERVER] Terminating agent process...");
+    agentProcess.kill();
+    agentProcess = null;
+    res.json({ success: true, message: "Agent stopped." });
+  });
+
+  app.get("/api/agent/status", (req, res) => {
+    res.json({
+      running: agentProcess !== null,
+      pid: agentProcess ? agentProcess.pid : null,
+      target: currentTarget
+    });
+  });
+  // -----------------------------
 
   // 2. Fetch prices endpoint
   app.get("/api/prices/:ticker", async (req, res) => {
@@ -159,31 +246,26 @@ async function startServer() {
     ]);
   });
 
-  // 4. Run Backtest simulation
+  // 4. Run Backtest Simulation
   app.post("/api/backtest", async (req, res) => {
+    // Return cached backtest if recent
+    if (cache.backtest && Date.now() - cache.lastBacktestTime < CACHE_TTL) {
+      return res.json(cache.backtest);
+    }
+    
     try {
-      const { strategy, tickers, start_date, end_date, initial_cash } = req.body;
-      
-      if (!strategy) {
-        return res.status(400).json({ error: "Missing strategy parameter" });
-      }
-
-      const config: StrategyConfig = {
-        strategy: strategy || "Dual Momentum",
-        tickers: tickers || ["SPY", "QQQ", "IWM", "XLK", "XLF"],
-        lookback: strategy === "SMA Crossover" ? 50 : strategy === "Volatility Target" ? 20 : 63,
-        top_n: strategy === "SMA Crossover" ? 1 : 3,
-        max_pos_size: strategy === "SMA Crossover" ? 100 : 30,
-        sma_filter: strategy === "Dual Momentum",
-        leverage_cap: 1.5
-      };
-
-      const cashValue = Number(initial_cash) || 100000;
-      const startStr = start_date || "2023-01-01";
-      const endStr = end_date || "2024-01-01";
+      const config = req.body;
+      const cashValue = Number(config.initial_cash) || 100000;
+      const startStr = config.start_date || "2023-01-01";
+      const endStr = config.end_date || "2023-12-31";
 
       console.log(`[SERVER] API Request: Running backtest [${config.strategy}] with $${cashValue} from ${startStr} to ${endStr}`);
       const results = await runSimulation(config, cashValue, startStr, endStr);
+      
+      // Cache the result
+      cache.backtest = results;
+      cache.lastBacktestTime = Date.now();
+      
       res.json(results);
     } catch (err: any) {
       console.error("[SERVER] Backtest simulation failed:", err);
@@ -193,6 +275,10 @@ async function startServer() {
 
   // 5. Get Real-Time / Live Signals using Gemini API
   app.post("/api/simulate/live", async (req, res) => {
+    if (cache.liveSignal && Date.now() - cache.lastLiveSignalTime < CACHE_TTL) {
+      return res.json(cache.liveSignal);
+    }
+    
     try {
       // Fetch latest prices for top assets to construct the context
       const today = new Date();
@@ -212,13 +298,10 @@ async function startServer() {
             const lookback = bars[bars.length - 63] ? bars[bars.length - 63].close : bars[0].close;
             latestPrice[asset] = Number(current.toFixed(2));
             latestReturns[asset] = Number((((current - lookback) / lookback) * 100).toFixed(2));
-          } else {
-            latestPrice[asset] = asset === "QQQ" ? 445.22 : asset === "SPY" ? 547.80 : 184.20;
-            latestReturns[asset] = asset === "QQQ" ? 6.2 : asset === "SPY" ? 4.9 : -0.4;
           }
         } catch {
-          latestPrice[asset] = asset === "QQQ" ? 445.22 : asset === "SPY" ? 547.80 : 184.20;
-          latestReturns[asset] = asset === "QQQ" ? 6.2 : asset === "SPY" ? 4.9 : -0.4;
+          // No fallback — if Alpaca data unavailable, skip this asset
+          console.warn(`[SERVER] Could not fetch data for ${asset}`);
         }
       }
 
@@ -239,58 +322,218 @@ async function startServer() {
         { ticker: topTicker, side: "BUY", qty: 150, target_pct: 30 }
       ];
 
-      // If Gemini is available, generate sophisticated rationale!
-      if (ai) {
-        try {
-          const prompt = `You are a Lead Quantitative Research Analyst at a premier institutional hedge fund.
-Given the following real ETF prices and trailing 3-month momentum percentages:
-${JSON.stringify({ latestPrice, latestReturns }, null, 2)}
-
-Formulate today's highest conviction "Top Conviction Signal". Pick ONE ETF from the list that represents the strongest structural momentum trade.
-Establish whether to BUY, SELL, or HOLD.
-Draft an expert "AI Rationale" explaining the entry setup or tactical regime, mentioning support/resistance, SPY above/below trendlines, or volatility squeeze indicator metrics in a professional trading tone.
-
-Provide your final response as active JSON using this schema:
-{
-  "signal": "BUY" | "SELL" | "HOLD",
-  "ticker": "string ETF Ticker, e.g. QQQ",
-  "reason": "expert analytical rationale (about 2-3 sentences)",
-  "suggested_orders": [
-    { "ticker": "string", "side": "BUY"|"SELL", "qty": number, "target_pct": number }
-  ]
-}`;
-
-          console.log("[SERVER] Activating AI signal generation pipeline...");
-          const parsed = await generateSignalsWithGemini(ai, prompt);
-          if (parsed) {
-            signalAction = parsed.signal || signalAction;
-            topTicker = parsed.ticker || topTicker;
-            reason = parsed.reason || reason;
-            suggestedOrders = parsed.suggested_orders || suggestedOrders;
-            console.log(`[SERVER] Custom live parameters generated: ${signalAction} on ${topTicker}`);
-          }
-        } catch (genErr) {
-          // Silent fallback to avoid triggering telemetry alarms on transient network issues
-          console.log("[SERVER] Live parameters optimized with internal quantitative rebalancing engine.");
-        }
-      }
-
-      res.json({
-        date: new Date().toISOString().split("T")[0],
+      const liveSignalPayload = {
+        date: today.toISOString().split("T")[0],
         ticker: topTicker,
         action: signalAction,
-        reason,
+        reason: reason,
         momentum: topReturn,
-        suggested_orders: suggestedOrders,
-        universe_state: { prices: latestPrice, returns: latestReturns }
-      });
+        universe: {
+          latestPrice,
+          latestReturns
+        },
+        orders: suggestedOrders
+      };
 
+      // Cache it
+      cache.liveSignal = liveSignalPayload;
+      cache.lastLiveSignalTime = Date.now();
+
+      res.json(liveSignalPayload);
     } catch (err: any) {
       console.error("[SERVER] Live simulation failed:", err);
       res.status(500).json({ error: err.message || "Failed to generate live signals" });
     }
   });
 
+
+  // 6. Live Alpaca Portfolio Endpoint
+  app.get("/api/alpaca/portfolio", async (req, res) => {
+    if (cache.portfolio && Date.now() - cache.lastPortfolioTime < 60000) { // 1 min cache for portfolio
+      return res.json(cache.portfolio);
+    }
+    
+    try {
+      const backendDir = path.join(process.cwd(), "..", "backend");
+      const { stdout, stderr } = await execAsync(`python live_status.py`, { cwd: backendDir });
+      
+      if (stderr) {
+        console.warn("[SERVER] Alpaca Script Warning/Error:", stderr);
+      }
+      
+      const data = JSON.parse(stdout);
+      if (data.error) {
+        return res.status(500).json(data);
+      }
+      
+      cache.portfolio = data;
+      cache.lastPortfolioTime = Date.now();
+      
+      res.json(data);
+    } catch (err: any) {
+      console.error("[SERVER] Failed to fetch live Alpaca portfolio:", err);
+      res.status(500).json({ error: "Failed to connect to live brokerage." });
+    }
+  });
+
+  // 7. Market Candlestick Data Endpoint
+  app.get("/api/market/candles/:ticker", async (req, res) => {
+    const { ticker } = req.params;
+    const tf = req.query.tf || "15Min";
+    try {
+      const backendDir = path.join(process.cwd(), "..", "backend");
+      const { stdout } = await execAsync(`python fetch_candles.py ${ticker} ${tf}`, { cwd: backendDir });
+      res.json(JSON.parse(stdout));
+    } catch (err: any) {
+      console.error("[SERVER] Candle fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch candle data" });
+    }
+  });
+
+  // 8. ML Prediction Endpoint
+  app.get("/api/ml/predict/:ticker", async (req, res) => {
+    try {
+      const ticker = (req.params.ticker || "SPY").toUpperCase();
+      const backendDir = path.join(process.cwd(), "..", "backend");
+      const { stdout } = await execAsync(`python ml_predictor.py ${ticker}`, { cwd: backendDir });
+      
+      const data = JSON.parse(stdout);
+      res.json(data);
+    } catch (err: any) {
+      console.error(`[SERVER] Failed to run ML prediction for ${req.params.ticker}:`, err);
+      res.status(500).json({ error: "Failed to run ML engine." });
+    }
+  });
+
+  // 9. Agent Trade History Endpoint
+  app.get("/api/agent/trades", async (req, res) => {
+    try {
+      const backendDir = path.join(process.cwd(), "..", "backend");
+      const { stdout } = await execAsync(`python trade_history.py`, { cwd: backendDir });
+      res.json(JSON.parse(stdout));
+    } catch (err: any) {
+      console.error("[SERVER] Trade history fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch trade history" });
+    }
+  });
+
+  // 10. Agent Performance Stats Endpoint
+  app.get("/api/agent/performance", async (req, res) => {
+    try {
+      const backendDir = path.join(process.cwd(), "..", "backend");
+      const { stdout } = await execAsync(`python performance_stats.py`, { cwd: backendDir });
+      res.json(JSON.parse(stdout));
+    } catch (err: any) {
+      console.error("[SERVER] Performance stats fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch performance stats" });
+    }
+  });
+
+  // 11. News Sentiment Endpoint (using Alpaca News API)
+  app.get("/api/news/:ticker", async (req, res) => {
+    const ticker = (req.params.ticker || "SPY").toUpperCase();
+    try {
+      const backendDir = path.join(process.cwd(), "..", "backend");
+      const { stdout } = await execAsync(`python news_sentiment.py ${ticker}`, { cwd: backendDir });
+      res.json(JSON.parse(stdout));
+    } catch (err: any) {
+      console.error(`[SERVER] Failed to fetch news for ${ticker}:`, err);
+      res.json([]);
+    }
+  });
+
+  // 12. Risk Heatmap Endpoint
+  app.get("/api/risk/heatmap", async (req, res) => {
+    try {
+      const universe = ["SPY", "QQQ", "IWM", "XLK", "XLF", "XLE", "XLV", "GLD", "TLT", "SMH", "BTC-USD", "ETH-USD"];
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - 3);
+      
+      const returns: Record<string, number[]> = {};
+      
+      for (const ticker of universe) {
+        try {
+          const bars = await getPricesForTicker(ticker, startDate, endDate);
+          if (bars.length > 5) {
+            const dailyRets: number[] = [];
+            for (let i = 1; i < bars.length; i++) {
+              dailyRets.push((bars[i].close - bars[i-1].close) / bars[i-1].close);
+            }
+            returns[ticker] = dailyRets;
+          }
+        } catch { /* skip */ }
+      }
+      
+      // Compute correlation matrix
+      const tickers = Object.keys(returns);
+      const correlation: Record<string, Record<string, number>> = {};
+      
+      for (const t1 of tickers) {
+        correlation[t1] = {};
+        for (const t2 of tickers) {
+          const r1 = returns[t1];
+          const r2 = returns[t2];
+          const minLen = Math.min(r1.length, r2.length);
+          if (minLen > 5) {
+            const a = r1.slice(-minLen);
+            const b = r2.slice(-minLen);
+            const meanA = a.reduce((s, v) => s + v, 0) / minLen;
+            const meanB = b.reduce((s, v) => s + v, 0) / minLen;
+            let cov = 0, varA = 0, varB = 0;
+            for (let i = 0; i < minLen; i++) {
+              cov += (a[i] - meanA) * (b[i] - meanB);
+              varA += (a[i] - meanA) ** 2;
+              varB += (b[i] - meanB) ** 2;
+            }
+            const corr = (varA > 0 && varB > 0) ? cov / Math.sqrt(varA * varB) : 0;
+            correlation[t1][t2] = Number(corr.toFixed(3));
+          } else {
+            correlation[t1][t2] = t1 === t2 ? 1 : 0;
+          }
+        }
+      }
+      
+      // Sector mapping
+      const sectors: Record<string, string> = {
+        SPY: "Broad Market", QQQ: "Tech/Growth", IWM: "Small Cap",
+        XLK: "Technology", XLF: "Financials", XLE: "Energy",
+        XLV: "Healthcare", GLD: "Commodities", TLT: "Fixed Income", SMH: "Semiconductors",
+        "BTC-USD": "Cryptocurrency", "ETH-USD": "Cryptocurrency"
+      };
+      
+      // Volatility
+      const volatility: Record<string, number> = {};
+      for (const t of tickers) {
+        const r = returns[t];
+        if (r.length > 5) {
+          const std = Math.sqrt(r.reduce((s, v) => s + v * v, 0) / r.length - (r.reduce((s, v) => s + v, 0) / r.length) ** 2);
+          volatility[t] = Number((std * Math.sqrt(252) * 100).toFixed(1));
+        }
+      }
+      
+      res.json({ correlation, sectors, volatility, tickers });
+    } catch (err: any) {
+      console.error("[SERVER] Risk heatmap failed:", err);
+      res.status(500).json({ error: "Failed to compute risk heatmap" });
+    }
+  });
+
+  // 13. Strategy Switch Endpoint
+  let activeStrategy = "momentum";
+  app.post("/api/agent/strategy", (req, res) => {
+    const { strategy } = req.body;
+    if (["momentum", "mean_reversion", "breakout"].includes(strategy)) {
+      activeStrategy = strategy;
+      res.json({ success: true, active: activeStrategy });
+    } else {
+      res.status(400).json({ error: "Invalid strategy" });
+    }
+  });
+  
+  app.get("/api/agent/strategy", (req, res) => {
+    res.json({ active: activeStrategy });
+  });
 
   // Serve frontend files using Vite in development vs. compiled file server in production
   if (process.env.NODE_ENV !== "production") {
@@ -311,6 +554,30 @@ Provide your final response as active JSON using this schema:
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 TradeVision AI Server listening on http://0.0.0.0:${PORT}`);
+    
+    // Background Pre-loader
+    console.log("[SERVER] Initiating background pre-load of heavy data endpoints...");
+    fetchPortfolioCache();
+    
+    // Fire a local request to preload the AI signals
+    fetch(`http://127.0.0.1:${PORT}/api/simulate/live`, { method: "POST" })
+      .then(() => console.log("[SERVER] ✅ Pre-loaded Live AI Signals into cache."))
+      .catch(() => console.log("[SERVER] ⚠️ Failed to pre-load Live AI Signals."));
+      
+    // Fire a local request to preload the backtest
+    fetch(`http://127.0.0.1:${PORT}/api/backtest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        strategy: "Dual Momentum",
+        tickers: ["SPY", "QQQ", "IWM", "XLK", "GLD"],
+        start_date: "2023-01-01",
+        end_date: "2024-06-01",
+        initial_cash: 100000
+      })
+    })
+      .then(() => console.log("[SERVER] ✅ Pre-loaded Default Backtest into cache."))
+      .catch(() => console.log("[SERVER] ⚠️ Failed to pre-load Default Backtest."));
   });
 }
 

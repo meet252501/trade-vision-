@@ -78,7 +78,7 @@ export default function StrategyScreen() {
     }
   };
 
-  const availableUniverseAssets = ["SPY", "QQQ", "IWM", "XLK", "XLF", "XLE", "XLV", "GLD", "TLT"];
+  const availableUniverseAssets = ["SPY", "QQQ", "IWM", "XLK", "XLF", "XLE", "XLV", "GLD", "TLT", "BTC-USD", "ETH-USD"];
 
   return (
     <div className="space-y-6">

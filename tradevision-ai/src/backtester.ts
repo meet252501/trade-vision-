@@ -13,56 +13,6 @@ const UNIVERSE_BASE_PRICES: Record<string, { base: number; drift: number; vol: n
   TLT: { base: 102, drift: -0.05, vol: 0.14 },
 };
 
-/**
- * Generate fallback deterministic pricing data if Yahoo Finance fails or is rate-limited
- */
-export function generateSyntheticPrices(ticker: string, start: Date, end: Date): PriceBar[] {
-  const bars: PriceBar[] = [];
-  const baseConf = UNIVERSE_BASE_PRICES[ticker] || { base: 100, drift: 0.08, vol: 0.18 };
-  
-  // Seed based on ticker characters to be deterministic
-  let seed = 0;
-  for (let i = 0; i < ticker.length; i++) {
-    seed += ticker.charCodeAt(i) * (i + 1);
-  }
-  const rand = () => {
-    seed = (seed * 9301 + 49297) % 233280;
-    return seed / 233280;
-  };
-
-  const current = new Date(start);
-  let price = baseConf.base;
-  const days = Math.floor((end.getTime() - start.getTime()) / (1000 * 3600 * 24));
-  
-  // Compute synthetic prices daily (trading days only)
-  for (let d = 0; d <= days; d++) {
-    const dayOfWeek = current.getDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Monday-Friday
-      const dateStr = current.toISOString().split("T")[0];
-      const dailyDrift = baseConf.drift / 252;
-      const dailyVol = baseConf.vol / Math.sqrt(252);
-      
-      // Box-Muller transform for normal distribution
-      const u1 = rand() || 0.0001;
-      const u2 = rand() || 0.0001;
-      const z = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-      
-      const change = price * (dailyDrift + dailyVol * z);
-      price = Math.max(1.0, price + change);
-      
-      bars.push({
-        ts: dateStr,
-        open: price * (1 - 0.002 * rand()),
-        high: price * (1 + 0.004 * rand()),
-        low: price * (1 - 0.004 * rand()),
-        close: price,
-        volume: Math.floor(1000000 + rand() * 9000000),
-      });
-    }
-    current.setDate(current.getDate() + 1);
-  }
-  return bars;
-}
 
 /**
  * Fetch real prices from Yahoo Finance API, fallback to synthetic data if requested or errors
@@ -121,8 +71,8 @@ export async function getPricesForTicker(ticker: string, start: Date, end: Date)
     return bars;
 
   } catch (err: any) {
-    console.warn(`[BACKTEST ENGINE] Fallback to synthetic data for ${ticker} due to: ${err.message || err}`);
-    return generateSyntheticPrices(ticker, start, end);
+    console.error(`[BACKTEST ENGINE] Failed to fetch real data for ${ticker}: ${err.message || err}`);
+    throw err;
   }
 }
 

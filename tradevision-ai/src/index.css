@@ -1,6 +1,42 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
+@layer base {
+  :root {
+    --bg-main: #0b1326;
+    --bg-nav: #0b1326;
+    --bg-card: rgba(30, 41, 59, 0.8);
+    --border-color: #334155;
+    --text-primary: #ffffff;
+    --text-secondary: #94A3B8;
+    --accent-blue: #3B82F6;
+    --accent-indigo: #6366F1;
+    --accent-green: #10B981;
+    --accent-red: #EF4444;
+    --accent-yellow: #F59E0B;
+  }
+
+  :root[data-theme="light"] {
+    --bg-main: #f8fafc;
+    --bg-nav: #ffffff;
+    --bg-card: rgba(255, 255, 255, 0.9);
+    --border-color: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #64748b;
+    --accent-blue: #2563eb;
+    --accent-indigo: #4f46e5;
+    --accent-green: #059669;
+    --accent-red: #dc2626;
+    --accent-yellow: #d97706;
+  }
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Outfit", sans-serif;

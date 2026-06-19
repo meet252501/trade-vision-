@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutDashboard, BarChart3, Brain, Radio, Settings, HelpCircle, Sparkles } from "lucide-react";
+import { LayoutDashboard, BarChart3, Brain, Radio, Settings, HelpCircle, Sparkles, Cpu, ScrollText, Trophy, Newspaper, Grid, Eye } from "lucide-react";
 
 interface SideNavBarProps {
   currentTab: string;
@@ -11,9 +11,15 @@ interface SideNavBarProps {
 export default function SideNavBar({ currentTab, setTab, onSettingsClick, onSupportClick }: SideNavBarProps) {
   const tabs = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "trades", label: "Trade Log", icon: ScrollText },
+    { id: "performance", label: "Performance", icon: Trophy },
+    { id: "news", label: "News Sentiment", icon: Newspaper },
+    { id: "risk", label: "Risk Heatmap", icon: Grid },
+    { id: "watchlist", label: "Watchlist", icon: Eye },
     { id: "backtest", label: "Backtest", icon: BarChart3 },
     { id: "strategy", label: "Strategy", icon: Brain },
-    { id: "signals", label: "Signals", icon: Radio },
+    { id: "ai-lab", label: "AI Trading Lab", icon: Cpu },
+    { id: "help", label: "Documentation", icon: HelpCircle },
   ];
 
   return (

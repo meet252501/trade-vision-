@@ -1,5 +1,6 @@
 import React from "react";
-import { Bell, User, Cpu, ShieldAlert, Wifi } from "lucide-react";
+import { Bell, User, Cpu, ShieldAlert, Wifi, Sun, Moon } from "lucide-react";
+import { useTheme } from "../ThemeContext";
 
 interface TopAppBarProps {
   currentTab: string;
@@ -20,6 +21,7 @@ export default function TopAppBar({
   onSupportClick,
   onNotificationClick
 }: TopAppBarProps) {
+  const { theme, toggleTheme } = useTheme();
   // Format tab label for breadcrumb
   const formattedTabLabel = currentTab.charAt(0).toUpperCase() + currentTab.slice(1);
 
@@ -72,6 +74,15 @@ export default function TopAppBar({
           <Wifi className="w-3 h-3 text-[#10B981]" />
           <span>CONNECTED</span>
         </div>
+
+        {/* Theme Toggle */}
+        <button
+          onClick={toggleTheme}
+          className="p-2 rounded-lg text-[#94A3B8] hover:text-[#e2e8f0] hover:bg-[#1e293b]/50 transition-colors"
+          title="Toggle Theme"
+        >
+          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
 
         {/* Notifications and Alert center */}
         <button 
