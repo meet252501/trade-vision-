@@ -60,12 +60,27 @@ while True:
         
         # Try to get latest quotes
         try:
-            from alpaca.data.requests import StockLatestQuoteRequest
-            quote_req = StockLatestQuoteRequest(symbol_or_symbols=list(full_universe))
-            quotes = executor.data_client.get_stock_latest_quote(quote_req)
-            for sym, quote in quotes.items():
-                if float(quote.ask_price) > 0:
-                    portfolio_state['last_prices'][sym] = float(quote.ask_price)
+            from alpaca.data.requests import StockLatestQuoteRequest, CryptoLatestQuoteRequest
+            from alpaca.data.historical import CryptoHistoricalDataClient
+            
+            crypto_symbols = [s for s in full_universe if '/USD' in s]
+            stock_symbols = [s for s in full_universe if '/USD' not in s]
+            
+            if stock_symbols:
+                quote_req = StockLatestQuoteRequest(symbol_or_symbols=stock_symbols)
+                quotes = executor.data_client.get_stock_latest_quote(quote_req)
+                for sym, quote in quotes.items():
+                    if float(quote.ask_price) > 0:
+                        portfolio_state['last_prices'][sym] = float(quote.ask_price)
+                        
+            if crypto_symbols:
+                crypto_client = CryptoHistoricalDataClient(API_KEY, SECRET_KEY)
+                crypto_req = CryptoLatestQuoteRequest(symbol_or_symbols=crypto_symbols)
+                crypto_quotes = crypto_client.get_crypto_latest_quote(crypto_req)
+                for sym, quote in crypto_quotes.items():
+                    if float(quote.ask_price) > 0:
+                        portfolio_state['last_prices'][sym] = float(quote.ask_price)
+                        
         except Exception as e:
             print(f"  [WARN] Could not fetch latest quotes: {e}")
         

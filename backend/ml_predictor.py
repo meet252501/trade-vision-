@@ -10,7 +10,8 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import DataFeed
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings('ignore')
 load_dotenv()
@@ -65,14 +66,24 @@ def run_ml(ticker):
         X = df[features]
         y = df['Target']
         
-        # Train Random Forest
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-        model.fit(X[:-1], y[:-1]) # Train on all but the last day
+        # Standardize features for Neural Network convergence
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Train Deep Neural Network (MLP)
+        model = MLPClassifier(
+            hidden_layer_sizes=(100, 50, 25),
+            activation='relu',
+            solver='adam',
+            max_iter=500,
+            random_state=42
+        )
+        model.fit(X_scaled[:-1], y[:-1]) # Train on all but the last day
         
         # Predict the latest day
-        latest_features = X.iloc[-1:]
-        prob = model.predict_proba(latest_features)[0]
-        prediction = int(model.predict(latest_features)[0])
+        latest_features_scaled = scaler.transform(X.iloc[-1:])
+        prob = model.predict_proba(latest_features_scaled)[0]
+        prediction = int(model.predict(latest_features_scaled)[0])
         
         # Generate Historical Markers for the Chart
         # We will backtest the model on the last 30 days to generate visual BUY/SELL markers
@@ -80,7 +91,8 @@ def run_ml(ticker):
         recent_df = df.tail(30)
         for idx, row in recent_df.iterrows():
             f = pd.DataFrame([row[features]], columns=features)
-            pred = model.predict(f)[0]
+            f_scaled = scaler.transform(f)
+            pred = model.predict(f_scaled)[0]
             date_str = row['timestamp'].strftime('%Y-%m-%d')
             if pred == 1:
                 markers.append({

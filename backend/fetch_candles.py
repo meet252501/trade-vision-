@@ -4,8 +4,8 @@ import json
 import warnings
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.data.enums import DataFeed
 
@@ -17,7 +17,7 @@ SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
 
 def fetch_candles(ticker, timeframe_str="1D"):
     try:
-        client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+        is_crypto = '/USD' in ticker
         
         # Decide timeframe and lookback
         if timeframe_str == "15Min":
@@ -29,15 +29,26 @@ def fetch_candles(ticker, timeframe_str="1D"):
         else:
             tf = TimeFrame.Day
             lookback_days = 100
-
-        req = StockBarsRequest(
-            symbol_or_symbols=ticker,
-            timeframe=tf,
-            start=datetime.now() - timedelta(days=lookback_days),
-            end=datetime.now(),
-            feed=DataFeed.IEX
-        )
-        bars = client.get_stock_bars(req)
+            
+        if is_crypto:
+            client = CryptoHistoricalDataClient(API_KEY, SECRET_KEY)
+            req = CryptoBarsRequest(
+                symbol_or_symbols=ticker,
+                timeframe=tf,
+                start=datetime.now() - timedelta(days=lookback_days),
+                end=datetime.now()
+            )
+            bars = client.get_crypto_bars(req)
+        else:
+            client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+            req = StockBarsRequest(
+                symbol_or_symbols=ticker,
+                timeframe=tf,
+                start=datetime.now() - timedelta(days=lookback_days),
+                end=datetime.now(),
+                feed=DataFeed.IEX
+            )
+            bars = client.get_stock_bars(req)
         
         if bars.df.empty:
             print(json.dumps([]))

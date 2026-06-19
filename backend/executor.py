@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import DataFeed
 
@@ -28,6 +28,7 @@ if not API_KEY or not SECRET_KEY:
 # Initialize Alpaca Clients
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=PAPER)
 data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+crypto_data_client = CryptoHistoricalDataClient(API_KEY, SECRET_KEY)
 
 def fetch_portfolio_state():
     print("Fetching portfolio state...")
@@ -65,21 +66,36 @@ def fetch_market_state(universe, last_prices):
     end_date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=20)
     start_date = end_date - datetime.timedelta(days=300)
     
-    request_params = StockBarsRequest(
-        symbol_or_symbols=universe,
-        timeframe=TimeFrame.Day,
-        start=start_date,
-        end=end_date,
-        feed=DataFeed.IEX
-    )
+    stock_universe = [s for s in universe if '/USD' not in s]
+    crypto_universe = [s for s in universe if '/USD' in s]
     
-    bars = data_client.get_stock_bars(request_params)
+    bars = {}
+    if stock_universe:
+        request_params = StockBarsRequest(
+            symbol_or_symbols=stock_universe,
+            timeframe=TimeFrame.Day,
+            start=start_date,
+            end=end_date,
+            feed=DataFeed.IEX
+        )
+        stock_bars = data_client.get_stock_bars(request_params)
+        bars.update(stock_bars.data if hasattr(stock_bars, 'data') else {})
+        
+    if crypto_universe:
+        crypto_request_params = CryptoBarsRequest(
+            symbol_or_symbols=crypto_universe,
+            timeframe=TimeFrame.Day,
+            start=start_date,
+            end=end_date
+        )
+        crypto_bars = crypto_data_client.get_crypto_bars(crypto_request_params)
+        bars.update(crypto_bars.data if hasattr(crypto_bars, 'data') else {})
     
     market_state = {}
     for ticker in universe:
         market_state[ticker] = []
-        if ticker in bars.data:
-            for bar in bars.data[ticker]:
+        if ticker in bars:
+            for bar in bars[ticker]:
                 market_state[ticker].append({
                     'date': str(bar.timestamp.date()),
                     'open': float(bar.open),
@@ -145,14 +161,22 @@ if __name__ == "__main__":
     full_universe = set(agent.UNIVERSE + [p['ticker'] for p in portfolio_state['positions']])
     
     try:
-        from alpaca.data.historical import StockHistoricalDataClient
-        from alpaca.data.requests import StockLatestQuoteRequest
-        # Also need to add feed='iex' or similar for quotes if possible, 
-        # but let's just use the fallback if it fails
-        quote_req = StockLatestQuoteRequest(symbol_or_symbols=list(full_universe))
-        quotes = data_client.get_stock_latest_quote(quote_req)
-        for sym, quote in quotes.items():
-            portfolio_state['last_prices'][sym] = float(quote.ask_price)
+        from alpaca.data.requests import StockLatestQuoteRequest, CryptoLatestQuoteRequest
+        crypto_symbols = [s for s in full_universe if '/USD' in s]
+        stock_symbols = [s for s in full_universe if '/USD' not in s]
+        
+        if stock_symbols:
+            quote_req = StockLatestQuoteRequest(symbol_or_symbols=stock_symbols)
+            quotes = data_client.get_stock_latest_quote(quote_req)
+            for sym, quote in quotes.items():
+                portfolio_state['last_prices'][sym] = float(quote.ask_price)
+                
+        if crypto_symbols:
+            crypto_req = CryptoLatestQuoteRequest(symbol_or_symbols=crypto_symbols)
+            crypto_quotes = crypto_data_client.get_crypto_latest_quote(crypto_req)
+            for sym, quote in crypto_quotes.items():
+                portfolio_state['last_prices'][sym] = float(quote.ask_price)
+                
     except Exception as e:
         print(f"Warning: Could not fetch latest quotes (free tier limits may apply). Fallback to last close. {e}")
 
