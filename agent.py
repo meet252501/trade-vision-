@@ -2,10 +2,10 @@ import math
 import statistics
 
 # ■■ Configuration ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
-YOLO_BASKET  = ["TQQQ", "SOXL", "UPRO", "TECL"] # 3x Leveraged ETFs
+YOLO_BASKET  = ["TQQQ", "SOXL", "UPRO", "SPXL"] # 3x Leveraged ETFs
 LOOKBACKS    = [3, 7]           # Fast: 3-tick, 7-tick momentum
 TOP_N        = 2                # Hold top 2 strongest ETFs
-MAX_POS      = 0.25             # 25% allocation * 2 = 50% cash used * 3x beta = 1.5x Leverage Limit
+MAX_POS      = 0.23             # 23% allocation * 2 = 46% cash used * 3x beta = 1.38x Leverage Limit (provides safety buffer against drift disqualification)
 
 _state = {
     'peak_equity': 0,
@@ -36,7 +36,7 @@ def decide(market_state: dict, portfolio_state: dict, cash: float, tradeable_equ
         for p in positions:
             t = p['ticker']
             qty = p['quantity']
-            if not any(o['ticker'] == t for o in orders):
+            if qty > 0 and not any(o['ticker'] == t for o in orders):
                 orders.append({'ticker': t, 'side': 'sell', 'quantity': abs(qty)})
         return orders # Liquidate and return immediately
 
