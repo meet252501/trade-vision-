@@ -33,13 +33,14 @@ RISK_UNIVERSE = (
     "SMH", "NVDA", "AMD", "AVGO", "MU", "MRVL", "QCOM",
     "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA",
     "PLTR", "COIN",
+    "MSTR", "XBI", "CRWD", "NOW", "PANW", "SNPS", "CDNS",
+    "LLY", "NVO", "VRT", "CEG", "GE", "ITA", "XME", "SMCI",
+    "TQQQ", "SOXL"
 )
 HEDGE = ("GLD",)
 BETA = {
-    "TQQQ": 3, "SOXL": 3, "UPRO": 3, "SPXL": 3, "TNA": 3,
-    "FAS": 3, "TECL": 3, "LABU": 3, "CURE": 3, "DRN": 3,
-    "UDOW": 3, "NAIL": 3,
-    "QLD": 2, "SSO": 2, "DDM": 2, "ROM": 2, "UWM": 2, "AGQ": 2,
+    "TQQQ": 3.0, "SOXL": 3.0, "UPRO": 3.0, "SPXL": 3.0,
+    "QLD": 2.0, "SSO": 2.0
 }
 
 # ============================================================================
@@ -47,6 +48,7 @@ BETA = {
 # ============================================================================
 REBALANCE_EVERY = 3
 TOP_N = 6
+TOP_W = 0.16
 TOP_N_SOFT = 3
 MAX_W = 0.24
 DRIFT = 0.27
@@ -74,8 +76,9 @@ COOLDOWN = 2
 ON_GROSS = 0.96
 SOFT_GROSS = 0.55
 OFF_HEDGE = 0.15
-OVERLAY_QLD = 0.14
-OVERLAY_SSO = 0.10
+TOP_N_OVERLAY = 5
+TOP_W_OVERLAY = 0.155
+OVERLAY_3X = {"TQQQ": 0.1125, "SOXL": 0.1125}
 
 _ANN = sqrt(252.0)
 _tick = 0
@@ -197,7 +200,6 @@ def _rank(ms, universe, n):
 # TARGET WEIGHTS
 # ============================================================================
 def _targets(ms, regime):
-    # HARD: gold hedge + cash
     if regime == "hard":
         w = {}
         for t in HEDGE:
@@ -205,7 +207,6 @@ def _targets(ms, regime):
                 w[t] = OFF_HEDGE
         return w
 
-    # SOFT: top 3 at 50% gross
     if regime == "soft":
         winners = _rank(ms, RISK_UNIVERSE, TOP_N_SOFT)
         if not winners:
@@ -217,33 +218,35 @@ def _targets(ms, regime):
         pw = min(MAX_W, SOFT_GROSS / len(winners))
         return {t: pw for t in winners}
 
-    # ON: top 5 at ~92% gross + leverage overlay
-    winners = _rank(ms, RISK_UNIVERSE, TOP_N)
-    if not winners:
-        return _targets(ms, "soft")
-
-    pw = min(MAX_W, ON_GROSS / len(winners))
-    weights = {t: pw for t in winners}
-
-    # Leverage overlay: only in very calm uptrends
+    # Leverage overlay check
     qqq = _c(ms.get("QQQ") or [])
     q20 = _sma(qqq, SMA_FAST) if len(qqq) >= SMA_FAST else None
     q50 = _sma(qqq, SMA_MED) if len(qqq) >= SMA_MED else None
     qm = _ret(qqq, MOM_20) if len(qqq) > MOM_20 + 1 else None
     qv = _vol(qqq, 20)
 
-    overlay_ok = (
+    overlay_3x = (
         q20 is not None and q50 is not None
         and qm is not None and qv is not None
         and q20 > q50
         and qm > 0.005
         and qv < 0.25
-        and _c(ms.get("QLD") or [])
-        and _c(ms.get("SSO") or [])
+        and _c(ms.get("TQQQ") or [])
+        and _c(ms.get("SOXL") or [])
     )
-    if overlay_ok:
-        weights["QLD"] = OVERLAY_QLD
-        weights["SSO"] = OVERLAY_SSO
+
+    n_winners = TOP_N_OVERLAY if overlay_3x else TOP_N
+    win_w = TOP_W_OVERLAY if overlay_3x else TOP_W
+
+    winners = _rank(ms, RISK_UNIVERSE, n_winners)
+    if not winners:
+        return _targets(ms, "soft")
+
+    weights = {t: win_w for t in winners}
+
+    if overlay_3x:
+        for t, wt in OVERLAY_3X.items():
+            weights[t] = weights.get(t, 0) + wt
 
     # Enforce beta-adjusted gross cap
     bg = sum(w * BETA.get(t, 1) for t, w in weights.items())
