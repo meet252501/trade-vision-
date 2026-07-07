@@ -286,7 +286,7 @@ def _orders(targets, positions, eq, lp, cash_avail):
                 sell_cash += sq * px
 
     # Buys second
-    spendable = max(float(cash_avail), 0.0) + sell_cash * 0.98
+    spendable = max(0.0, (float(cash_avail) + sell_cash) * 0.98)
     for t, w in sorted(targets.items(), key=lambda x: -x[1]):
         px = lp.get(t)
         if not px or px <= 0:
