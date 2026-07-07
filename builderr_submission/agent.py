@@ -316,8 +316,16 @@ def decide(market_state, portfolio_state, cash):
     if not market_state:
         return []
 
-    pos = {p["ticker"]: p for p in portfolio_state.get("positions", [])}
-    lp = portfolio_state.get("last_prices", {})
+    pos_list = portfolio_state.get("positions") or []
+    pos = {p["ticker"]: p for p in pos_list}
+    lp = portfolio_state.get("last_prices") or {}
+    if not lp:
+        for t, bars in market_state.items():
+            if bars and "close" in bars[-1]:
+                try:
+                    lp[t] = float(bars[-1]["close"])
+                except (ValueError, TypeError):
+                    pass
     eq = portfolio_state.get("cash", cash)
     for t, p in pos.items():
         eq += p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0))
