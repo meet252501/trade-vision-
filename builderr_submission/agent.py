@@ -52,7 +52,7 @@ TOP_W = 0.16
 TOP_N_SOFT = 3
 MAX_W = 0.24
 DRIFT = 0.27
-MAX_BETA_GROSS = 1.45
+MAX_BETA_GROSS = 1.35
 DEAD_BAND = 0.012
 
 # Regime detection
