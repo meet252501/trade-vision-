@@ -63,7 +63,7 @@ VOL_CEIL = 0.35
 
 # Momentum
 MOM_20 = 20
-MOM_60 = 60
+MOM_60 = 50
 MOM_SKIP = 5
 
 # Crash brake
