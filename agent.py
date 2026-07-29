@@ -52,7 +52,7 @@ TOP_W = 0.16
 TOP_N_SOFT = 3
 MAX_W = 0.28
 DRIFT = 0.29
-MAX_BETA_GROSS = 1.46
+MAX_BETA_GROSS = 1.42
 DEAD_BAND = 0.012
 
 # Exposure
@@ -351,9 +351,18 @@ def decide(market_state, portfolio_state, cash):
     derisk = (_last_reg is not None and reg != _last_reg and
               (reg == "hard" or (reg == "soft" and _last_reg == "on")))
 
-    drifted = eq > 0 and any(
-        p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0)) / eq > DRIFT
-        for t, p in pos.items()
+    current_beta = 0.0
+    if eq > 0:
+        for t, p in pos.items():
+            w = p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0)) / eq
+            current_beta += w * BETA.get(t, 1.0)
+
+    drifted = eq > 0 and (
+        current_beta > 1.48 or
+        any(
+            p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0)) / eq > DRIFT
+            for t, p in pos.items()
+        )
     )
 
     on_cadence = _tick - _last_reb >= REBALANCE_EVERY
