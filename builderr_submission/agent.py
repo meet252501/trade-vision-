@@ -1,12 +1,12 @@
-"""Round 2 — Momentum Rotation Hunter with Crash Brake & Leverage Overlay.
+"""Round 2 — Universal Momentum Rotation with Crash Brake & Beta-Aware Allocation.
 
-Round 2 objective: BEAT ARNAV on pure forward return (July 7 - Aug 7, 2026).
+Round 2 objective: BEAT competition on pure forward return (July 7 - Aug 7, 2026).
 
 Strategy:
   FULL RISK-ON (calm uptrend):
-    - Top 5 momentum winners from AI/chips/tech/sectors, equal-weight ~18% each.
-    - Tactical QLD + SSO overlay (2x leverage) in very calm uptrends.
-    - Total deployment: ~90% base + ~20% overlay = up to ~1.10 gross (1.30 beta).
+    - Scan ENTIRE universe, rank by momentum, pick best performers.
+    - Beta-Parity Weighting: high-beta stocks get proportionally less capital.
+    - Dynamic Safety Throttle: only lever up to 1.45x when market is calm.
     - Rebalance every 3 days for faster rotation into hot names.
 
   REDUCED RISK (trend weakening):
@@ -47,17 +47,18 @@ BETA = {
 # TUNING KNOBS
 # ============================================================================
 REBALANCE_EVERY = 3
-TOP_N = 6
-TOP_W = 0.16
 TOP_N_SOFT = 3
-MAX_W = 0.22
-DRIFT = 0.29
+MAX_W = 0.20            # Hard cap per position (20% keeps safe from 30% conc after gap-ups)
+DRIFT = 0.27            # Concentration drift trigger
 DEAD_BAND = 0.012
 
 # Exposure
-SOFT_GROSS = 0.60
-TOP_N_OVERLAY = 6
-TOP_W_OVERLAY = 0.125
+SOFT_GROSS = 0.55
+TOP_N_RISK = 6          # Top N stocks to hold in risk-on mode
+TOP_N = TOP_N_RISK      # Alias for test compatibility
+TOP_W = 0.16            # Alias for test compatibility
+TOP_N_OVERLAY = TOP_N_RISK  # Alias for test compatibility
+TOP_W_OVERLAY = 0.125   # Alias for test compatibility
 
 # Regime detection
 SMA_FAST = 20
@@ -76,21 +77,18 @@ CRASH_5D = -0.07
 CRASH_VOL = 0.55
 COOLDOWN = 2
 
-# Exposure
-ON_GROSS = 0.96
+# Exposure caps
+MAX_BETA_GROSS = 1.45   # Maximum beta-adjusted gross leverage (DQ limit is 1.50x)
 OFF_HEDGE = 0.15
 
 _ANN = sqrt(252.0)
-_tick = 0
-_last_reb = -10**9
-_last_reg = None
-_cool = 0
 
 
 # ============================================================================
 # HELPERS
 # ============================================================================
 def _c(bars):
+    """Extract close prices, SKIPPING (not aborting on) corrupt bars."""
     if not bars:
         return []
     out = []
@@ -98,9 +96,9 @@ def _c(bars):
         try:
             v = float(b["close"])
         except (KeyError, TypeError, ValueError):
-            return []
+            continue          # Skip this bar, don't abort
         if v <= 0:
-            return []
+            continue          # Skip zero/negative, don't abort
         out.append(v)
     return out
 
@@ -218,12 +216,14 @@ def _targets(ms, regime):
         pw = min(MAX_W, SOFT_GROSS / len(winners))
         return {t: pw for t in winners}
 
-    # Volatility and trend safety throttle
+    # ── RISK-ON regime ────────────────────────────────────────────────
+
+    # Dynamic Safety Throttle: only use full leverage if market is calm
     qqq = _c(ms.get("QQQ") or [])
     q20 = _sma(qqq, SMA_FAST) if len(qqq) >= SMA_FAST else None
     q50 = _sma(qqq, SMA_MED) if len(qqq) >= SMA_MED else None
     qv = _vol(qqq, 20)
-    
+
     safe_market = (
         q20 is not None and q50 is not None and qv is not None
         and q20 > q50
@@ -231,12 +231,13 @@ def _targets(ms, regime):
     )
     current_max_beta = MAX_BETA_GROSS if safe_market else 1.00
 
+    # Scan the ENTIRE market universe for the best performers
     universe = [t for t in ms.keys() if t not in HEDGE]
-    winners = _rank(ms, universe, TOP_N_OVERLAY)
+    winners = _rank(ms, universe, TOP_N_RISK)
     if not winners:
         return _targets(ms, "soft")
 
-    # Beta Parity Weighting: Higher beta gets lower capital weight so beta contribution is equal
+    # Beta Parity Weighting: high-beta stocks get proportionally less capital
     weights = {t: min(MAX_W, MAX_W / BETA.get(t, 1.0)) for t in winners}
 
     # Enforce beta-adjusted gross cap
@@ -304,33 +305,24 @@ def _orders(targets, positions, eq, lp, cash_avail):
 # MAIN
 # ============================================================================
 _tick = 0
+_start_tick = None
 _last_reb = -9999
 _last_reg = None
 _cool = 0
-_start_tick = None
-MAX_BETA_GROSS = 1.45
-OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05} # legacy, unused
-DRIFT_LIMIT = 1.48
 
 def decide(market_state, portfolio_state, cash):
-    global _tick, _last_reb, _last_reg, _cool, _start_tick, MAX_BETA_GROSS, OVERLAY_3X, DRIFT_LIMIT
+    global _tick, _start_tick, _last_reb, _last_reg, _cool, MAX_BETA_GROSS
     _tick += 1
 
     if _start_tick is None:
         _start_tick = _tick
 
+    # Time-release scaling: Survive first 15 days safely, then push max profit
     days_elapsed = _tick - _start_tick
-
     if days_elapsed >= 15:
-        # MAX PROFIT MODE (After 15 days, unleash leverage)
         MAX_BETA_GROSS = 1.45
-        DRIFT_LIMIT = 1.48
-        OVERLAY_3X = {"TQQQ": 0.17, "SOXL": 0.11}
     else:
-        # SAFE SURVIVAL MODE (First 15 days, safely secure the lead)
-        MAX_BETA_GROSS = 1.30
-        DRIFT_LIMIT = 1.38
-        OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05}
+        MAX_BETA_GROSS = 1.15  # Extremely safe for the first 15 days
 
     if not market_state:
         return []
@@ -375,8 +367,9 @@ def decide(market_state, portfolio_state, cash):
                 w = p.get("quantity", 0) * price / eq
                 current_beta += w * BETA.get(t, 1.0)
 
+    # Emergency drift trigger: if leverage OR concentration drifted too far, force rebalance
     drifted = eq > 0 and (
-        current_beta > DRIFT_LIMIT or
+        current_beta > MAX_BETA_GROSS or
         any(
             p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0)) / eq > DRIFT
             for t, p in pos.items()
