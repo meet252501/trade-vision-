@@ -52,14 +52,12 @@ TOP_W = 0.16
 TOP_N_SOFT = 3
 MAX_W = 0.28
 DRIFT = 0.29
-MAX_BETA_GROSS = 1.30
 DEAD_BAND = 0.012
 
 # Exposure
 SOFT_GROSS = 0.60
 TOP_N_OVERLAY = 6
 TOP_W_OVERLAY = 0.125
-OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05}
 
 # Regime detection
 SMA_FAST = 20
@@ -314,9 +312,34 @@ def _orders(targets, positions, eq, lp, cash_avail):
 # ============================================================================
 # MAIN
 # ============================================================================
+_tick = 0
+_last_reb = -9999
+_last_reg = None
+_cool = 0
+_start_tick = None
+MAX_BETA_GROSS = 1.30
+OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05}
+DRIFT_LIMIT = 1.38
+
 def decide(market_state, portfolio_state, cash):
-    global _tick, _last_reb, _last_reg, _cool
+    global _tick, _last_reb, _last_reg, _cool, _start_tick, MAX_BETA_GROSS, OVERLAY_3X, DRIFT_LIMIT
     _tick += 1
+
+    if _start_tick is None:
+        _start_tick = _tick
+
+    days_elapsed = _tick - _start_tick
+
+    if days_elapsed >= 15:
+        # MAX PROFIT MODE (After 15 days, unleash leverage)
+        MAX_BETA_GROSS = 1.45
+        DRIFT_LIMIT = 1.48
+        OVERLAY_3X = {"TQQQ": 0.17, "SOXL": 0.11}
+    else:
+        # SAFE SURVIVAL MODE (First 15 days, safely secure the lead)
+        MAX_BETA_GROSS = 1.30
+        DRIFT_LIMIT = 1.38
+        OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05}
 
     if not market_state:
         return []
@@ -362,7 +385,7 @@ def decide(market_state, portfolio_state, cash):
                 current_beta += w * BETA.get(t, 1.0)
 
     drifted = eq > 0 and (
-        current_beta > 1.38 or
+        current_beta > DRIFT_LIMIT or
         any(
             p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0)) / eq > DRIFT
             for t, p in pos.items()
