@@ -218,6 +218,19 @@ def _targets(ms, regime):
         pw = min(MAX_W, SOFT_GROSS / len(winners))
         return {t: pw for t in winners}
 
+    # Volatility and trend safety throttle
+    qqq = _c(ms.get("QQQ") or [])
+    q20 = _sma(qqq, SMA_FAST) if len(qqq) >= SMA_FAST else None
+    q50 = _sma(qqq, SMA_MED) if len(qqq) >= SMA_MED else None
+    qv = _vol(qqq, 20)
+    
+    safe_market = (
+        q20 is not None and q50 is not None and qv is not None
+        and q20 > q50
+        and qv < 0.25
+    )
+    current_max_beta = MAX_BETA_GROSS if safe_market else 1.00
+
     universe = [t for t in ms.keys() if t not in HEDGE]
     winners = _rank(ms, universe, TOP_N_OVERLAY)
     if not winners:
@@ -228,8 +241,8 @@ def _targets(ms, regime):
 
     # Enforce beta-adjusted gross cap
     bg = sum(w * BETA.get(t, 1) for t, w in weights.items())
-    if bg > MAX_BETA_GROSS:
-        s = MAX_BETA_GROSS / bg
+    if bg > current_max_beta:
+        s = current_max_beta / bg
         weights = {t: w * s for t, w in weights.items()}
 
     return {t: min(w, MAX_W) for t, w in weights.items() if w > 0.005}
