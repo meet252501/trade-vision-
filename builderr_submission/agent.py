@@ -50,7 +50,7 @@ REBALANCE_EVERY = 3
 TOP_N = 6
 TOP_W = 0.16
 TOP_N_SOFT = 3
-MAX_W = 0.28
+MAX_W = 0.22
 DRIFT = 0.29
 DEAD_BAND = 0.012
 
@@ -218,35 +218,13 @@ def _targets(ms, regime):
         pw = min(MAX_W, SOFT_GROSS / len(winners))
         return {t: pw for t in winners}
 
-    # Leverage overlay check
-    qqq = _c(ms.get("QQQ") or [])
-    q20 = _sma(qqq, SMA_FAST) if len(qqq) >= SMA_FAST else None
-    q50 = _sma(qqq, SMA_MED) if len(qqq) >= SMA_MED else None
-    qm = _ret(qqq, MOM_20) if len(qqq) > MOM_20 + 1 else None
-    qv = _vol(qqq, 20)
-
-    overlay_3x = (
-        q20 is not None and q50 is not None
-        and qm is not None and qv is not None
-        and q20 > q50
-        and qm > 0.005
-        and qv < 0.25
-        and _c(ms.get("TQQQ") or [])
-        and _c(ms.get("SOXL") or [])
-    )
-
-    n_winners = TOP_N_OVERLAY if overlay_3x else TOP_N
-    win_w = TOP_W_OVERLAY if overlay_3x else TOP_W
-
-    winners = _rank(ms, RISK_UNIVERSE, n_winners)
+    universe = [t for t in ms.keys() if t not in HEDGE]
+    winners = _rank(ms, universe, TOP_N_OVERLAY)
     if not winners:
         return _targets(ms, "soft")
 
-    weights = {t: win_w for t in winners}
-
-    if overlay_3x:
-        for t, wt in OVERLAY_3X.items():
-            weights[t] = weights.get(t, 0) + wt
+    # Beta Parity Weighting: Higher beta gets lower capital weight so beta contribution is equal
+    weights = {t: min(MAX_W, MAX_W / BETA.get(t, 1.0)) for t in winners}
 
     # Enforce beta-adjusted gross cap
     bg = sum(w * BETA.get(t, 1) for t, w in weights.items())
@@ -317,9 +295,9 @@ _last_reb = -9999
 _last_reg = None
 _cool = 0
 _start_tick = None
-MAX_BETA_GROSS = 1.30
-OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05}
-DRIFT_LIMIT = 1.38
+MAX_BETA_GROSS = 1.45
+OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05} # legacy, unused
+DRIFT_LIMIT = 1.48
 
 def decide(market_state, portfolio_state, cash):
     global _tick, _last_reb, _last_reg, _cool, _start_tick, MAX_BETA_GROSS, OVERLAY_3X, DRIFT_LIMIT
