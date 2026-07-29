@@ -210,7 +210,7 @@ def _targets(ms, regime):
         return w
 
     if regime == "soft":
-        winners = _rank(ms, RISK_UNIVERSE, TOP_N_SOFT)
+        winners = _rank(ms, ("GLD", "XLU", "XLP", "XLV"), TOP_N_SOFT)
         if not winners:
             w = {}
             for t in HEDGE:
