@@ -52,14 +52,14 @@ TOP_W = 0.16
 TOP_N_SOFT = 3
 MAX_W = 0.28
 DRIFT = 0.29
-MAX_BETA_GROSS = 1.42
+MAX_BETA_GROSS = 1.30
 DEAD_BAND = 0.012
 
 # Exposure
 SOFT_GROSS = 0.60
 TOP_N_OVERLAY = 6
 TOP_W_OVERLAY = 0.125
-OVERLAY_3X = {"TQQQ": 0.17, "SOXL": 0.11}
+OVERLAY_3X = {"TQQQ": 0.10, "SOXL": 0.05}
 
 # Regime detection
 SMA_FAST = 20
@@ -333,7 +333,9 @@ def decide(market_state, portfolio_state, cash):
                     pass
     eq = portfolio_state.get("cash", cash)
     for t, p in pos.items():
-        eq += p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0))
+        price = lp.get(t, p.get("avg_cost", 0))
+        if price > 0:
+            eq += p.get("quantity", 0) * price
     if eq <= 0:
         return []
 
@@ -354,11 +356,13 @@ def decide(market_state, portfolio_state, cash):
     current_beta = 0.0
     if eq > 0:
         for t, p in pos.items():
-            w = p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0)) / eq
-            current_beta += w * BETA.get(t, 1.0)
+            price = lp.get(t, p.get("avg_cost", 0))
+            if price > 0:
+                w = p.get("quantity", 0) * price / eq
+                current_beta += w * BETA.get(t, 1.0)
 
     drifted = eq > 0 and (
-        current_beta > 1.48 or
+        current_beta > 1.38 or
         any(
             p.get("quantity", 0) * lp.get(t, p.get("avg_cost", 0)) / eq > DRIFT
             for t, p in pos.items()
