@@ -46,15 +46,15 @@ BETA = {
 # ============================================================================
 # TUNING KNOBS
 # ============================================================================
-REBALANCE_EVERY = 3
+REBALANCE_EVERY = 1
 TOP_N_SOFT = 3
-MAX_W = 0.20            # Hard cap per position (20% keeps safe from 30% conc after gap-ups)
-DRIFT = 0.27            # Concentration drift trigger
+MAX_W = 0.25            # Max cap per position
+DRIFT = 0.28            # Force rebalance if any asset drifts to 28%
 DEAD_BAND = 0.012
 
 # Exposure
 SOFT_GROSS = 0.55
-TOP_N_RISK = 6          # Top N stocks to hold in risk-on mode
+TOP_N_RISK = 6          # Expanded back to 6 to allow 1.49x total leverage (6 * 24% = 1.44x)
 TOP_N = TOP_N_RISK      # Alias for test compatibility
 TOP_W = 0.16            # Alias for test compatibility
 TOP_N_OVERLAY = TOP_N_RISK  # Alias for test compatibility
@@ -78,7 +78,7 @@ CRASH_VOL = 0.55
 COOLDOWN = 2
 
 # Exposure caps
-MAX_BETA_GROSS = 1.45   # Maximum beta-adjusted gross leverage (DQ limit is 1.50x)
+MAX_BETA_GROSS = 1.49   # Maximum beta-adjusted gross leverage pushed near DQ limit of 1.50x
 OFF_HEDGE = 0.15
 
 _ANN = sqrt(252.0)
@@ -237,8 +237,9 @@ def _targets(ms, regime):
     if not winners:
         return _targets(ms, "soft")
 
-    # Beta Parity Weighting: high-beta stocks get proportionally less capital
-    weights = {t: min(MAX_W, MAX_W / BETA.get(t, 1.0)) for t in winners}
+    # Beta Parity Weighting: distribute equally to reach max beta gross
+    base_weight = current_max_beta / len(winners)
+    weights = {t: min(MAX_W, base_weight / BETA.get(t, 1.0)) for t in winners}
 
     # Enforce beta-adjusted gross cap
     bg = sum(w * BETA.get(t, 1) for t, w in weights.items())
@@ -317,12 +318,8 @@ def decide(market_state, portfolio_state, cash):
     if _start_tick is None:
         _start_tick = _tick
 
-    # Time-release scaling: Survive first 15 days safely, then push max profit
-    days_elapsed = _tick - _start_tick
-    if days_elapsed >= 15:
-        MAX_BETA_GROSS = 1.45
-    else:
-        MAX_BETA_GROSS = 1.15  # Extremely safe for the first 15 days
+    # NO TIME-RELEASE SCALING. MAX PROFIT YOLO MODE ACTIVATED.
+    MAX_BETA_GROSS = 1.49
 
     if not market_state:
         return []

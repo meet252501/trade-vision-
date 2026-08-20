@@ -20,7 +20,7 @@ def run_prediction():
     print("=====================================================")
     
     simulations = 1000
-    days_left = 38
+    days_left = 13
     history_needed = 150 # Need at least 100 for SMA_LONG
     total_days = history_needed + days_left
     
