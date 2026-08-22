@@ -46,7 +46,7 @@ BETA = {
 # ============================================================================
 # TUNING KNOBS
 # ============================================================================
-REBALANCE_EVERY = 1
+REBALANCE_EVERY = 3
 TOP_N_SOFT = 3
 MAX_W = 0.25            # Max cap per position
 DRIFT = 0.28            # Force rebalance if any asset drifts to 28%
@@ -206,15 +206,11 @@ def _targets(ms, regime):
         return w
 
     if regime == "soft":
-        winners = _rank(ms, ("GLD", "XLU", "XLP", "XLV"), TOP_N_SOFT)
-        if not winners:
-            w = {}
-            for t in HEDGE:
-                if _c(ms.get(t) or []):
-                    w[t] = OFF_HEDGE
-            return w
-        pw = min(MAX_W, SOFT_GROSS / len(winners))
-        return {t: pw for t in winners}
+        w = {}
+        for t in HEDGE:
+            if _c(ms.get(t) or []):
+                w[t] = OFF_HEDGE
+        return w
 
     # ── RISK-ON regime ────────────────────────────────────────────────
 
@@ -310,6 +306,7 @@ _start_tick = None
 _last_reb = -9999
 _last_reg = None
 _cool = 0
+_peak_equity = 0.0
 
 def decide(market_state, portfolio_state, cash):
     global _tick, _start_tick, _last_reb, _last_reg, _cool, MAX_BETA_GROSS
@@ -364,6 +361,14 @@ def decide(market_state, portfolio_state, cash):
                 w = p.get("quantity", 0) * price / eq
                 current_beta += w * BETA.get(t, 1.0)
 
+    # 7% Position-Level Eject Button
+    eject_tickers = set()
+    for t, p in pos.items():
+        avg_cost = p.get("avg_cost", 0)
+        curr_price = lp.get(t, avg_cost)
+        if avg_cost > 0 and curr_price < avg_cost * 0.93:
+            eject_tickers.add(t)
+
     # Emergency drift trigger: if leverage OR concentration drifted too far, force rebalance
     drifted = eq > 0 and (
         current_beta > MAX_BETA_GROSS or
@@ -372,6 +377,7 @@ def decide(market_state, portfolio_state, cash):
             for t, p in pos.items()
         )
     )
+    drifted = drifted or bool(eject_tickers)
 
     on_cadence = _tick - _last_reb >= REBALANCE_EVERY
     _last_reg = reg
@@ -380,6 +386,9 @@ def decide(market_state, portfolio_state, cash):
         return []
 
     tgt = _targets(market_state, reg)
+    for t in eject_tickers:
+        if t in tgt:
+            del tgt[t]
     ords = _orders(tgt, pos, eq, lp, cash)
 
     if ords:
