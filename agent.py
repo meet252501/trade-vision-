@@ -46,10 +46,10 @@ BETA = {
 # ============================================================================
 # TUNING KNOBS
 # ============================================================================
-REBALANCE_EVERY = 3
+REBALANCE_EVERY = 1
 TOP_N_SOFT = 3
-MAX_W = 0.25            # Max cap per position
-DRIFT = 0.28            # Force rebalance if any asset drifts to 28%
+MAX_W = 0.29            # Max cap per position (pushed near 30% limit)
+DRIFT = 0.29            # Force rebalance if any asset drifts to 29%
 DEAD_BAND = 0.012
 
 # Exposure
@@ -214,18 +214,7 @@ def _targets(ms, regime):
 
     # ── RISK-ON regime ────────────────────────────────────────────────
 
-    # Dynamic Safety Throttle: only use full leverage if market is calm
-    qqq = _c(ms.get("QQQ") or [])
-    q20 = _sma(qqq, SMA_FAST) if len(qqq) >= SMA_FAST else None
-    q50 = _sma(qqq, SMA_MED) if len(qqq) >= SMA_MED else None
-    qv = _vol(qqq, 20)
-
-    safe_market = (
-        q20 is not None and q50 is not None and qv is not None
-        and q20 > q50
-        and qv < 0.25
-    )
-    current_max_beta = MAX_BETA_GROSS if safe_market else 1.00
+    current_max_beta = MAX_BETA_GROSS
 
     # Scan the ENTIRE market universe for the best performers
     universe = [t for t in ms.keys() if t not in HEDGE]
@@ -233,17 +222,21 @@ def _targets(ms, regime):
     if not winners:
         return _targets(ms, "soft")
 
-    # Beta Parity Weighting: distribute equally to reach max beta gross
-    base_weight = current_max_beta / len(winners)
-    weights = {t: min(MAX_W, base_weight / BETA.get(t, 1.0)) for t in winners}
+    # Greedy YOLO Weighting: pack as much weight into the top winners as possible
+    weights = {}
+    bg = 0.0
+    for t in winners:
+        if bg >= current_max_beta - 0.01:
+            break
+        b = BETA.get(t, 1.0)
+        # Max weight we can add without breaching MAX_W or current_max_beta
+        max_allowed = (current_max_beta - bg) / b
+        w = min(MAX_W, max_allowed)
+        if w > 0.005:
+            weights[t] = w
+            bg += w * b
 
-    # Enforce beta-adjusted gross cap
-    bg = sum(w * BETA.get(t, 1) for t, w in weights.items())
-    if bg > current_max_beta:
-        s = current_max_beta / bg
-        weights = {t: w * s for t, w in weights.items()}
-
-    return {t: min(w, MAX_W) for t, w in weights.items() if w > 0.005}
+    return weights
 
 
 # ============================================================================
