@@ -61,15 +61,15 @@ TOP_N_OVERLAY = TOP_N_RISK  # Alias for test compatibility
 TOP_W_OVERLAY = 0.125   # Alias for test compatibility
 
 # Regime detection
-SMA_FAST = 20
-SMA_MED = 50
-SMA_LONG = 100
 VOL_CEIL = 0.35
 
 # Momentum
-MOM_20 = 20
-MOM_60 = 50
-MOM_SKIP = 5
+MOM_60 = 60
+MOM_20 = 15
+MOM_SKIP = 8
+SMA_FAST = 5
+SMA_MED = 50
+SMA_LONG = 200
 
 # Crash brake
 CRASH_3D = -0.05
