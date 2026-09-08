@@ -78,7 +78,7 @@ CRASH_VOL = 0.55
 COOLDOWN = 2
 
 # Exposure caps
-MAX_BETA_GROSS = 1.49   # Maximum beta-adjusted gross leverage pushed near DQ limit of 1.50x
+MAX_BETA_GROSS = 1.42   # Targeted at 1.42x to leave 0.08x safety buffer for price drift
 OFF_HEDGE = 0.15
 
 _ANN = sqrt(252.0)
@@ -148,25 +148,13 @@ def _regime(ms):
     qm = _sma(qqq, SMA_MED)
     qv = _vol(qqq, 20)
 
-    if sf is None or qf is None:
-        return "soft"
-    if qv is not None and qv > VOL_CEIL:
-        return "soft"
-
-    # Full risk-on: above both fast and medium trends
-    above_fast = spy[-1] > sf and qqq[-1] > qf
-    above_med = (sm is None or spy[-1] > sm) and (qm is None or qqq[-1] > qm)
-
-    if above_fast and above_med:
-        return "on"
-    if above_fast:
-        return "on" if _last_reg == "on" else "soft"
-
-    # Below fast SMA: check severity
+    # Below long SMA: check severity
     sl = _sma(spy, SMA_LONG)
     if sl is not None and spy[-1] < sl * 0.97:
         return "hard"
-    return "soft"
+    
+    # YOLO MODE: Always hunt momentum unless in a confirmed crash
+    return "on"
 
 
 # ============================================================================
@@ -309,7 +297,7 @@ def decide(market_state, portfolio_state, cash):
         _start_tick = _tick
 
     # NO TIME-RELEASE SCALING. MAX PROFIT YOLO MODE ACTIVATED.
-    MAX_BETA_GROSS = 1.49
+    MAX_BETA_GROSS = 1.42
 
     if not market_state:
         return []
